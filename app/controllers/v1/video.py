@@ -3,6 +3,7 @@ import os
 import pathlib
 import shutil
 from typing import Optional, Union
+from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, Path, Query, Request, UploadFile
 from fastapi.params import File
@@ -30,6 +31,8 @@ from app.models.schema import (
     VideoMaterialUploadResponse,
     VideoMaterialRetrieveResponse
 )
+from app.auth.deps import _get_current_user
+from app.auth.models import User
 from app.services import bgm as bgm_service
 from app.services import state as sm
 from app.services import task as tm
@@ -60,6 +63,63 @@ else:
         max_concurrent_tasks=_max_concurrent_tasks,
         max_queued_tasks=_max_queued_tasks,
     )
+
+
+def _task_belongs_to(task: dict, user: User) -> bool:
+    """Return True if ``task`` is visible to ``user``.
+
+    Tasks created before auth carry no user_id and are treated as legacy: only
+    the admin may see them. Otherwise the task owner must match the user.
+    """
+    owner = task.get("user_id")
+    if owner is None:
+        return user.role == "admin"
+    return str(owner) == str(user.id)
+
+
+def _require_owned_task(task_id: str, user: User) -> dict:
+    """返回属于当前用户的任务，否则按 404 处理（复用 ``_task_belongs_to``）。"""
+    task = sm.state.get_task(task_id)
+    if not task or not _task_belongs_to(task, user):
+        raise HttpException(
+            task_id=task_id, status_code=404, message=f"{task_id}: task not found"
+        )
+    return task
+
+
+def _require_owned_task_file(file_path: str, user: User, request_id: str) -> None:
+    """校验 stream/download 相对路径第一段 task_id 的所有权。
+
+    产物路径形如 ``{task_id}/final-1.mp4``（相对 tasks 根目录）。取第一段作为
+    task_id 并复用 ``_task_belongs_to`` 做多租户隔离；找不到任务或不属于当前
+    用户一律按 404 处理，避免用不同状态码泄露任务是否存在。
+    """
+    task_id = (file_path or "").replace("\\", "/").strip("/").split("/")[0]
+    if not task_id:
+        raise HttpException(
+            task_id=request_id, status_code=404, message=f"{request_id}: file not found"
+        )
+    task = sm.state.get_task(task_id)
+    if not task or not _task_belongs_to(task, user):
+        raise HttpException(
+            task_id=request_id, status_code=404, message=f"{request_id}: file not found"
+        )
+
+
+_COPY_CHUNK_BYTES = 1024 * 1024
+_MAX_VIDEO_MATERIAL_BYTES = 500 * 1024 * 1024
+
+
+def _remove_upload_file(file_path: str) -> None:
+    """尽力清理上传残留文件，且不覆盖调用方正在处理的原始异常。"""
+    if not file_path or not os.path.exists(file_path):
+        return
+    try:
+        os.remove(file_path)
+    except OSError as exc:
+        logger.warning(
+            f"failed to remove uploaded file: path={file_path}, error={str(exc)}"
+        )
 
 
 def _sanitize_upload_filename(filename: str, request_id: str) -> str:
@@ -173,29 +233,39 @@ def _parse_byte_range(
 
 @router.post("/videos", response_model=TaskResponse, summary="Generate a short video")
 def create_video(
-    background_tasks: BackgroundTasks, request: Request, body: TaskVideoRequest
+    background_tasks: BackgroundTasks,
+    request: Request,
+    body: TaskVideoRequest,
+    current_user: User = Depends(_get_current_user),
 ):
-    return create_task(request, body, stop_at="video")
+    return create_task(request, body, stop_at="video", current_user=current_user)
 
 
 @router.post("/subtitle", response_model=TaskResponse, summary="Generate subtitle only")
 def create_subtitle(
-    background_tasks: BackgroundTasks, request: Request, body: SubtitleRequest
+    background_tasks: BackgroundTasks,
+    request: Request,
+    body: SubtitleRequest,
+    current_user: User = Depends(_get_current_user),
 ):
-    return create_task(request, body, stop_at="subtitle")
+    return create_task(request, body, stop_at="subtitle", current_user=current_user)
 
 
 @router.post("/audio", response_model=TaskResponse, summary="Generate audio only")
 def create_audio(
-    background_tasks: BackgroundTasks, request: Request, body: AudioRequest
+    background_tasks: BackgroundTasks,
+    request: Request,
+    body: AudioRequest,
+    current_user: User = Depends(_get_current_user),
 ):
-    return create_task(request, body, stop_at="audio")
+    return create_task(request, body, stop_at="audio", current_user=current_user)
 
 
 def create_task(
     request: Request,
     body: Union[TaskVideoRequest, SubtitleRequest, AudioRequest],
     stop_at: str,
+    current_user: User = None,
 ):
     task_id = utils.get_uuid()
     request_id = base.get_task_id(request)
@@ -214,7 +284,9 @@ def create_task(
             "request_id": request_id,
             "params": body.model_dump(),
         }
-        sm.state.update_task(task_id)
+        if current_user is not None:
+            task["user_id"] = str(current_user.id)
+        sm.state.update_task(task_id, user_id=task.get("user_id"))
         task_manager.add_task(tm.start, task_id=task_id, params=body, stop_at=stop_at)
         logger.success(f"Task created: {utils.to_json(task)}")
         return utils.get_response(200, task)
@@ -236,8 +308,14 @@ def get_all_tasks(
     request: Request,
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1),
+    current_user: User = Depends(_get_current_user),
 ):
-    tasks, total = sm.state.get_all_tasks(page, page_size)
+    tasks, total = sm.state.get_all_tasks(
+        page,
+        page_size,
+        user_id=current_user.id,
+        is_admin=current_user.role == "admin",
+    )
 
     response = {
         "tasks": [_public_task_data(task) for task in tasks],
@@ -256,10 +334,13 @@ def get_task(
     request: Request,
     task_id: str = Path(..., description="Task ID"),
     query: TaskQueryRequest = Depends(),
+    current_user: User = Depends(_get_current_user),
 ):
     request_id = base.get_task_id(request)
     endpoint = config.app.get("endpoint", "").rstrip("/")
     task = sm.state.get_task(task_id)
+    if task and not _task_belongs_to(task, current_user):
+        task = None
     if task:
         task_dir = utils.task_dir()
         response_task = _public_task_data(task)
@@ -286,9 +367,15 @@ def get_task(
     response_model=TaskDeletionResponse,
     summary="Delete a generated short video task",
 )
-def delete_video(request: Request, task_id: str = Path(..., description="Task ID")):
+def delete_video(
+    request: Request,
+    task_id: str = Path(..., description="Task ID"),
+    current_user: User = Depends(_get_current_user),
+):
     request_id = base.get_task_id(request)
     task = sm.state.get_task(task_id)
+    if task and not _task_belongs_to(task, current_user):
+        task = None
     if task:
         if tm.is_task_busy(task):
             logger.warning(
@@ -319,7 +406,10 @@ def delete_video(request: Request, task_id: str = Path(..., description="Task ID
 @router.get(
     "/musics", response_model=BgmRetrieveResponse, summary="Retrieve local BGM files"
 )
-def get_bgm_list(request: Request):
+def get_bgm_list(
+    request: Request,
+    current_user: User = Depends(_get_current_user),
+):
     bgm_list = []
     for file in bgm_service.list_bgm_files():
         filename = os.path.basename(file)
@@ -349,7 +439,11 @@ def get_bgm_list(request: Request):
         500: {"description": "FFmpeg validation or persistent storage is unavailable"},
     },
 )
-def upload_bgm_file(request: Request, file: UploadFile = File(...)):
+def upload_bgm_file(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: User = Depends(_get_current_user),
+):
     request_id = base.get_task_id(request)
     try:
         safe_filename = bgm_service.save_bgm_upload(file.filename, file.file)
@@ -382,7 +476,10 @@ def upload_bgm_file(request: Request, file: UploadFile = File(...)):
 @router.get(
     "/video_materials", response_model=VideoMaterialRetrieveResponse, summary="Retrieve local video materials"
 )
-def get_video_materials_list(request: Request):
+def get_video_materials_list(
+    request: Request,
+    current_user: User = Depends(_get_current_user),
+):
     allowed_suffixes = ("mp4", "mov", "avi", "flv", "mkv", "jpg", "jpeg", "png")
     local_videos_dir = utils.storage_dir("local_videos", create=True)
     files = []
@@ -412,32 +509,70 @@ def get_video_materials_list(request: Request):
     response_model=VideoMaterialUploadResponse,
     summary="Upload the video material file to the local videos directory",
 )
-def upload_video_material_file(request: Request, file: UploadFile = File(...)):
+def upload_video_material_file(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user: User = Depends(_get_current_user),
+):
     request_id = base.get_task_id(request)
     safe_filename = _sanitize_upload_filename(file.filename, request_id)
-    # check file ext
     allowed_suffixes = ("mp4", "mov", "avi", "flv", "mkv", "jpg", "jpeg", "png")
     suffix = pathlib.Path(safe_filename).suffix.lower().lstrip(".")
     # 按完整扩展名校验，既兼容 .MOV 这类大写后缀，也避免 photojpg 这种没有
     # 点号的文件名因为 endswith("jpg") 被误当成合法图片。
-    if suffix in allowed_suffixes:
-        local_videos_dir = utils.storage_dir("local_videos", create=True)
-        save_path = os.path.join(local_videos_dir, safe_filename)
-        # save file
-        with open(save_path, "wb+") as buffer:
-            # If the file already exists, it will be overwritten
-            file.file.seek(0)
-            buffer.write(file.file.read())
-        response = {"file": safe_filename}
-        return utils.get_response(200, response)
+    if suffix not in allowed_suffixes:
+        raise HttpException(
+            "",
+            status_code=400,
+            message=(
+                f"{request_id}: Only files with extensions "
+                f"{', '.join(allowed_suffixes)} can be uploaded"
+            ),
+        )
 
-    raise HttpException(
-        "", status_code=400, message=f"{request_id}: Only files with extensions {', '.join(allowed_suffixes)} can be uploaded"
-    )
+    local_videos_dir = utils.storage_dir("local_videos", create=True)
+    # 使用 UUID 落盘：既避免同名文件互相覆盖（跨用户干扰），也让并发上传互不影响。
+    stored_name = f"{uuid4().hex}.{suffix}"
+    save_path = os.path.join(local_videos_dir, stored_name)
+
+    try:
+        file.file.seek(0)
+        total_bytes = 0
+        with open(save_path, "wb") as buffer:
+            while True:
+                chunk = file.file.read(_COPY_CHUNK_BYTES)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > _MAX_VIDEO_MATERIAL_BYTES:
+                    raise HttpException(
+                        task_id=request_id,
+                        status_code=400,
+                        message=f"{request_id}: video material exceeds the 500 MB limit",
+                    )
+                buffer.write(chunk)
+    except HttpException:
+        _remove_upload_file(save_path)
+        raise
+    except OSError:
+        _remove_upload_file(save_path)
+        raise HttpException(
+            task_id=request_id,
+            status_code=500,
+            message=f"{request_id}: failed to store video material",
+        )
+
+    response = {"file": stored_name}
+    return utils.get_response(200, response)
 
 @router.get("/stream/{file_path:path}")
-async def stream_video(request: Request, file_path: str):
+async def stream_video(
+    request: Request,
+    file_path: str,
+    current_user: User = Depends(_get_current_user),
+):
     request_id = base.get_task_id(request)
+    _require_owned_task_file(file_path, current_user, request_id)
     tasks_dir = utils.task_dir()
     video_path = _resolve_path_within_directory(tasks_dir, file_path, request_id)
     range_header = request.headers.get("Range")
@@ -469,7 +604,11 @@ async def stream_video(request: Request, file_path: str):
 
 
 @router.get("/download/{file_path:path}")
-async def download_video(request: Request, file_path: str):
+async def download_video(
+    request: Request,
+    file_path: str,
+    current_user: User = Depends(_get_current_user),
+):
     """
     download video
     :param request: Request request
@@ -477,6 +616,7 @@ async def download_video(request: Request, file_path: str):
     :return: video file
     """
     request_id = base.get_task_id(request)
+    _require_owned_task_file(file_path, current_user, request_id)
     tasks_dir = utils.task_dir()
     video_path = _resolve_path_within_directory(tasks_dir, file_path, request_id)
     file_path = pathlib.Path(video_path)
@@ -498,8 +638,10 @@ def retry_task(
     background_tasks: BackgroundTasks,
     request: Request,
     task_id: str = Path(..., description="Task ID to retry"),
+    current_user: User = Depends(_get_current_user),
 ):
     """Re-submit a failed task with the same parameters read from script.json."""
+    _require_owned_task(task_id, current_user)
     import json as _json
     task_dir = utils.task_dir(task_id)
     script_file = os.path.join(task_dir, "script.json")
@@ -530,7 +672,7 @@ def retry_task(
             task_id=task_id, status_code=400,
             message=f"Failed to reconstruct task parameters: {_e}",
         )
-    return create_task(request, body, stop_at="video")
+    return create_task(request, body, stop_at="video", current_user=current_user)
 
 
 # ── Quality scoring endpoints (Level 3.5) ─────────────────────────────
@@ -538,8 +680,10 @@ def retry_task(
 @router.get("/videos/{task_id}/quality", summary="Get video quality report")
 def get_quality_report(
     task_id: str = Path(..., description="Task ID"),
+    current_user: User = Depends(_get_current_user),
 ):
     """Return the quality-scoring report for a completed task."""
+    _require_owned_task(task_id, current_user)
     import json as _json
     qr_path = os.path.join(utils.task_dir(task_id), "quality.json")
     if not os.path.exists(qr_path):
@@ -570,6 +714,7 @@ async def batch_create_tasks(
     csv_file: Optional[_UploadFile] = _File(None, description="CSV file with batch tasks"),
     json_body: Optional[str] = Query(None, description="JSON array of task objects (alternative to CSV)"),
     stop_at: str = Query("video", description="Pipeline stage to stop at"),
+    current_user: User = Depends(_get_current_user),
 ):
     """
     Submit multiple video-generation tasks at once.
@@ -658,8 +803,9 @@ async def batch_create_tasks(
                 "task_id": task_id,
                 "request_id": request_id,
                 "params": task_req.model_dump(),
+                "user_id": str(current_user.id),
             }
-            sm.state.update_task(task_id)
+            sm.state.update_task(task_id, user_id=task_data["user_id"])
             task_manager.add_task(tm.start, task_id=task_id, params=task_req, stop_at=stop_at)
             logger.success(f"Batch task created: {task_id} | subject: {raw_row.get('video_subject', '')[:50]}")
             results.append({

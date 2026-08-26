@@ -20,3 +20,10 @@ pydub==0.25.1
 audioop-lts==0.2.2; python_version >= "3.13"
 litellm==1.86.2
 jieba>=0.42.1
+sqlalchemy==2.0.36
+pymysql==1.1.1
+cryptography==43.0.3
+pyjwt==2.9.0
+passlib==1.7.4
+bcrypt==4.2.0
+alembic==1.13.3

@@ -21,6 +21,18 @@ return 1
 
 
 # Base class for state management
+def _task_visible(task: dict, user_id: int, is_admin: bool) -> bool:
+    """Return True if ``task`` is visible to the given user.
+
+    Legacy tasks (created before auth) carry no user_id and are visible only to
+    admins. Otherwise the task owner must match ``user_id``.
+    """
+    owner = task.get("user_id")
+    if owner is None:
+        return is_admin
+    return str(owner) == str(user_id)
+
+
 class BaseState(ABC):
     @abstractmethod
     def update_task(self, task_id: str, state: int, progress: int = 0, **kwargs):
@@ -31,7 +43,7 @@ class BaseState(ABC):
         pass
 
     @abstractmethod
-    def get_all_tasks(self, page: int, page_size: int):
+    def get_all_tasks(self, page: int, page_size: int, user_id: int = None, is_admin: bool = False):
         pass
 
     @abstractmethod
@@ -46,13 +58,17 @@ class MemoryState(BaseState):
         self._tasks = {}
         self._lock = threading.RLock()
 
-    def get_all_tasks(self, page: int, page_size: int):
+    def get_all_tasks(self, page: int, page_size: int, user_id: int = None, is_admin: bool = False):
+        with self._lock:
+            visible = [
+                copy.deepcopy(task)
+                for task in self._tasks.values()
+                if _task_visible(task, user_id, is_admin)
+            ]
+            total = len(visible)
         start = (page - 1) * page_size
         end = start + page_size
-        with self._lock:
-            tasks = [copy.deepcopy(task) for task in self._tasks.values()]
-            total = len(tasks)
-        return tasks[start:end], total
+        return visible[start:end], total
 
     def update_task(
         self,
@@ -111,12 +127,9 @@ class RedisState(BaseState):
 
         self._redis = redis.StrictRedis(host=host, port=port, db=db, password=password)
 
-    def get_all_tasks(self, page: int, page_size: int):
-        start = (page - 1) * page_size
-        end = start + page_size
+    def get_all_tasks(self, page: int, page_size: int, user_id: int = None, is_admin: bool = False):
         tasks = []
         cursor = 0
-        total = 0
         while True:
             # Redis 数据库中除了任务 Hash，还可能存在 RedisTaskManager 使用的
             # List 队列。只扫描 Hash 可以避免对队列执行 HGETALL 时触发
@@ -126,29 +139,27 @@ class RedisState(BaseState):
                 count=page_size,
                 _type="HASH",
             )
-            batch_start = total
-            batch_size = len(keys)
-            total += batch_size
+            for key in keys:
+                if user_id is not None and not is_admin:
+                    owner = self._redis.hget(key, "user_id")
+                    if owner is None:
+                        continue
+                    if str(owner.decode("utf-8")) != str(user_id):
+                        continue
+                task_data = self._redis.hgetall(key)
+                task = {
+                    k.decode("utf-8"): self._convert_to_original_type(v)
+                    for k, v in task_data.items()
+                }
+                tasks.append(task)
 
-            # Redis SCAN 是分批返回 key。分页切片必须基于“当前批次起始索引”
-            # 计算，而不能用累积后的 total 反推，否则第一页会切到空数组，
-            # 第二页也可能只返回部分数据。
-            if batch_start < end and total > start:
-                slice_start = max(0, start - batch_start)
-                slice_end = min(batch_size, end - batch_start)
-                for key in keys[slice_start:slice_end]:
-                    task_data = self._redis.hgetall(key)
-                    task = {
-                        k.decode("utf-8"): self._convert_to_original_type(v)
-                        for k, v in task_data.items()
-                    }
-                    tasks.append(task)
-
-            # 即使当前页已经取满，也要继续 SCAN 到 cursor=0，
-            # 因为调用方需要准确 total 来渲染分页信息。
             if cursor == 0:
                 break
-        return tasks, total
+
+        total = len(tasks)
+        start = (page - 1) * page_size
+        end = start + page_size
+        return tasks[start:end], total
 
     def update_task(
         self,
