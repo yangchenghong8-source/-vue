@@ -1,0 +1,62 @@
+.DS_Store
+/config.toml
+/config.toml.bak
+/storage/
+/.idea/
+/app/services/__pycache__
+/app/__pycache__/
+/app/config/__pycache__/
+/app/models/__pycache__/
+/app/utils/__pycache__/
+/*/__pycache__/*
+.vscode
+/**/.streamlit
+__pycache__
+logs/
+
+node_modules
+# VuePress 默认临时文件目录
+/sites/docs/.vuepress/.temp
+# VuePress 默认缓存目录
+/sites/docs/.vuepress/.cache
+# VuePress 默认构建生成的静态文件目录
+/sites/docs/.vuepress/dist
+# 模型目录
+/models/
+./models/*
+
+venv/
+.venv
+
+# Debug and test files
+CLAUDE.md
+debug/
+debug_*.py
+test_*.py
+!test/services/test_*.py
+!test/test_*.py
+streamlit.log
+.coverage
+coverage.xml
+htmlcov/
+.codegraph
+/docs/superpowers
+.understand-anything
+
+# ===== 公开仓库排除项 =====
+# 本地环境变量与凭据（真实值仅存于服务器）
+.env
+.env.kb
+# config 备份（含真实密钥），覆盖 .bak_model_YYYYMMDD 等后缀
+/config.toml.bak*
+# 所有源码备份副本：.bak / .bak2 / .bak_gkb / .bak.1786614700 ...
+*.bak*
+# 一次性脚本备份目录
+backup_script_duration_*/
+# 微软商业字体，不可公开分发
+resource/fonts/MicrosoftYaHeiBold.ttc
+# BGM 素材（86MB，授权不明）
+resource/songs/
+
+# shell 重定向事故产物
+白字像素=*
