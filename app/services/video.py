@@ -21,7 +21,6 @@ from moviepy import (
     TextClip,
     VideoFileClip,
     afx,
-    concatenate_videoclips,
 )
 from moviepy.video.fx import Loop
 from moviepy.video.tools.subtitles import SubtitlesClip
@@ -641,6 +640,109 @@ def _preprocess_image_for_aspect(
     return output_path
 
 
+def _resolve_shot_transition(transition_value):
+    # shuffle 随机展开成具体转场；slide 随机进入方向。每个 shot 独立随机。
+    if transition_value in (None, VideoTransitionMode.none.value):
+        return None, None
+    if transition_value == VideoTransitionMode.shuffle.value:
+        transition_value = random.choice(
+            [
+                VideoTransitionMode.fade_in.value,
+                VideoTransitionMode.fade_out.value,
+                VideoTransitionMode.slide_in.value,
+                VideoTransitionMode.slide_out.value,
+                VideoTransitionMode.zoom_in.value,
+                VideoTransitionMode.zoom_out.value,
+            ]
+        )
+    _side = None
+    if transition_value in (
+        VideoTransitionMode.slide_in.value,
+        VideoTransitionMode.slide_out.value,
+    ):
+        _side = random.choice(["left", "right", "top", "bottom"])
+    return transition_value, _side
+
+
+def _slide_overlay_exprs(transition, side, width, height, dur):
+    # slide_in：开头 1 秒从画外滑入到位；slide_out：结尾 1 秒从原位滑出画外。
+    # ffmpeg overlay 的 x/y 表达式默认逐帧求值，t 为当前帧时间戳。
+    if transition == VideoTransitionMode.slide_in.value:
+        _p = "min(t,1)"
+        if side == "left":
+            return "-{w}+{w}*{p}".format(w=width, p=_p), "0"
+        if side == "right":
+            return "{w}-{w}*{p}".format(w=width, p=_p), "0"
+        if side == "top":
+            return "0", "-{h}+{h}*{p}".format(h=height, p=_p)
+        return "0", "{h}-{h}*{p}".format(h=height, p=_p)
+    _st = max(dur - 1, 0)
+    _p = "min(max(t-{st},0),1)".format(st=_st)
+    if side == "left":
+        return "-{w}*{p}".format(w=width, p=_p), "0"
+    if side == "right":
+        return "{w}*{p}".format(w=width, p=_p), "0"
+    if side == "top":
+        return "0", "-{h}*{p}".format(h=height, p=_p)
+    return "0", "{h}*{p}".format(h=height, p=_p)
+
+
+def _convert_shot_with_ffmpeg(src, dur, output, width, height, speed, transition, side):
+    # 图片 -loop 1、视频 -stream_loop -1 循环，统一输出 dur 秒、目标分辨率、
+    # 目标帧率，并应用变速与 fade/slide 转场。zoom 转场不在此处理（保留 MoviePy）。
+    ffmpeg_binary = get_ffmpeg_binary()
+    is_image = utils.parse_extension(src) in const.FILE_TYPE_IMAGES
+
+    _chain = (
+        "scale={w}:{h}:force_original_aspect_ratio=decrease,"
+        "pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
+    ).format(w=width, h=height)
+    if speed != 1.0:
+        _chain += ",setpts={ratio}*PTS".format(ratio=round(1.0 / speed, 6))
+
+    _is_slide = transition in (
+        VideoTransitionMode.slide_in.value,
+        VideoTransitionMode.slide_out.value,
+    )
+    if _is_slide:
+        _x_expr, _y_expr = _slide_overlay_exprs(transition, side, width, height, dur)
+        _fc = (
+            "[0:v]{chain}[v];"
+            "color=c=black:s={w}x{h}:r={fps}:d={dur}[b];"
+            "[b][v]overlay=x='{xexpr}':y='{yexpr}':shortest=1[out]"
+        ).format(
+            chain=_chain, w=width, h=height, fps=fps, dur=dur,
+            xexpr=_x_expr, yexpr=_y_expr,
+        )
+        _cmd = [ffmpeg_binary, "-y"]
+        if is_image:
+            _cmd += ["-loop", "1", "-i", src]
+        else:
+            _cmd += ["-stream_loop", "-1", "-i", src]
+        _cmd += [
+            "-filter_complex", _fc, "-map", "[out]",
+            "-t", str(dur), "-r", str(fps), "-pix_fmt", "yuv420p", "-an", output,
+        ]
+    else:
+        if transition == VideoTransitionMode.fade_in.value:
+            _chain += ",fade=t=in:st=0:d=1"
+        elif transition == VideoTransitionMode.fade_out.value:
+            _chain += ",fade=t=out:st={st}:d=1".format(st=max(dur - 1, 0))
+        _cmd = [ffmpeg_binary, "-y"]
+        if is_image:
+            _cmd += ["-loop", "1", "-i", src]
+        else:
+            _cmd += ["-stream_loop", "-1", "-i", src]
+        _cmd += [
+            "-t", str(dur), "-vf", _chain,
+            "-r", str(fps), "-pix_fmt", "yuv420p", "-an", output,
+        ]
+
+    _result = subprocess.run(_cmd, capture_output=True, text=True, check=False)
+    if _result.returncode != 0:
+        raise RuntimeError((_result.stderr or _result.stdout or "").strip()[-2000:])
+
+
 def combine_videos(
     combined_video_path: str,
     video_paths: List[str],
@@ -716,153 +818,126 @@ def combine_videos(
             _durations.append(max_clip_duration)
         _durations = _durations[:len(video_paths)]
 
-        # Pre-convert images with per-shot durations
-        _shot_temp_files = []
-        _shot_paths = []
-        for _i, _vp in enumerate(video_paths):
+        # 每个 shot 统一处理成 temp-shot-N.mp4：图片/视频素材/变速/fade/slide
+        # 转场全部走 FFmpeg，最后一次性 concat，替代原先 MoviePy 逐帧
+        # concatenate + write_videofile。zoom 转场保留 MoviePy 逐帧（PIL 亚像素
+        # 采样防抖动），但仍写 temp 文件、走统一 concat。
+        _shot_temp_files = []        # 所有生成的 temp-shot 文件（清理用）
+        _shot_concat_paths = []      # 拼接文件列表（按 shot 顺序）
+        _shot_concat_durations = []  # 各 shot 实际时长（循环补足用）
+        for _i, (_vp, _dur) in enumerate(zip(video_paths, _durations)):
             _ext = utils.parse_extension(_vp)
-            _dur = _durations[_i]
-            if _ext in const.FILE_TYPE_IMAGES:
-                _vp = _preprocess_image_for_aspect(_vp, video_width, video_height, output_dir)
-                _temp_vid = "{output_dir}/temp-shot-{idx}.mp4".format(
-                    output_dir=output_dir, idx=len(_shot_temp_files))
-                try:
-                    _ffmpeg = get_ffmpeg_binary()
-                    _scale_filter = (
-                        "scale={vw}:{vh}:force_original_aspect_ratio=decrease,"
-                        "pad={vw}:{vh}:(ow-iw)/2:(oh-ih)/2:black"
-                    ).format(vw=video_width, vh=video_height)
-                    _cmd = [
-                        _ffmpeg, "-loop", "1", "-i", _vp,
-                        "-t", str(_dur), "-vf", _scale_filter,
-                        "-r", "30", "-pix_fmt", "yuv420p", "-y", _temp_vid,
-                    ]
-                    subprocess.run(_cmd, capture_output=True, check=True)
-                    _shot_paths.append(_temp_vid)
-                    _shot_temp_files.append(_temp_vid)
-                    logger.info(
-                        "shot {i}: image {src} -> {dst} ({dur:.1f}s)".format(
-                            i=_i + 1, src=os.path.basename(_vp),
-                            dst=os.path.basename(_temp_vid), dur=_dur,
-                        )
-                    )
-                except Exception as _exc:
-                    logger.warning("shot {i} conversion failed: {err}".format(i=_i + 1, err=_exc))
-            else:
-                _shot_paths.append(_vp)
-
-        # Build shot clips: one clip per material at its assigned duration
-        _shot_clips = []
-        for _i, (_vp, _dur) in enumerate(zip(_shot_paths, _durations)):
+            _is_image = _ext in const.FILE_TYPE_IMAGES
+            _temp_vid = "{output_dir}/temp-shot-{idx}.mp4".format(
+                output_dir=output_dir, idx=_i
+            )
+            # shuffle 展开成具体转场，slide 随机进入方向
+            _transition, _side = _resolve_shot_transition(transition_value)
             try:
-                _c = _open_video_clip_quietly(_vp)
-                if _c.duration > _dur:
-                    _c = _c.subclipped(0, _dur)
-                if normalized_clip_speed != 1.0:
-                    _c = _c.with_speed_scaled(normalized_clip_speed)
-                if _c.duration < _dur:
-                    # 短素材（如 gif 动图）循环到分配时长，防止拼接总时长不足导致黑屏
-                    # VideoFileClip 无 .loop() 方法，须用 moviepy.video.fx.Loop 效果
-                    _c = _c.with_effects([Loop(duration=_dur)])
-                # --- 素材标准化：统一 FPS ---
-                if abs(_c.fps - fps) > 0.01:
-                    logger.debug(
-                        f"shot {_i+1} normalizing fps: {_c.fps:.2f} -> {fps}"
+                if _is_image:
+                    _vp = _preprocess_image_for_aspect(
+                        _vp, video_width, video_height, output_dir
                     )
-                    _c = _c.with_fps(fps)
-                _cw, _ch = _c.size
-                if _cw != video_width or _ch != video_height:
-                    _c = _c.resized(new_size=(video_width, video_height))
-                # 应用转场（与通用视频素材分支一致）。素材驱动模式走 shot-by-shot
-                # 分支，此前这里未消费 video_transition_mode，导致随机转场等不生效。
-                shuffle_side = random.choice(["left", "right", "top", "bottom"])
-                if transition_value in (None, VideoTransitionMode.none.value):
-                    _c = _c
-                elif transition_value == VideoTransitionMode.fade_in.value:
-                    _c = video_effects.fadein_transition(_c, 1)
-                elif transition_value == VideoTransitionMode.fade_out.value:
-                    _c = video_effects.fadeout_transition(_c, 1)
-                elif transition_value == VideoTransitionMode.slide_in.value:
-                    _c = video_effects.slidein_transition(_c, 1, shuffle_side)
-                elif transition_value == VideoTransitionMode.slide_out.value:
-                    _c = video_effects.slideout_transition(_c, 1, shuffle_side)
-                elif transition_value == VideoTransitionMode.zoom_in.value:
-                    _c = video_effects.zoomin_transition(_c, 1)
-                elif transition_value == VideoTransitionMode.zoom_out.value:
-                    _c = video_effects.zoomout_transition(_c, 1)
-                elif transition_value == VideoTransitionMode.shuffle.value:
-                    transition_funcs = [
-                        lambda c: video_effects.fadein_transition(c, 1),
-                        lambda c: video_effects.fadeout_transition(c, 1),
-                        lambda c: video_effects.slidein_transition(c, 1, shuffle_side),
-                        lambda c: video_effects.slideout_transition(c, 1, shuffle_side),
-                        lambda c: video_effects.zoomin_transition(c, 1),
-                        lambda c: video_effects.zoomout_transition(c, 1),
-                    ]
-                    _c = random.choice(transition_funcs)(_c)
-                _shot_clips.append(_c)
+                if _transition in (
+                    VideoTransitionMode.zoom_in.value,
+                    VideoTransitionMode.zoom_out.value,
+                ):
+                    # zoom 转场：图片先转基础 mp4（无变速无转场），再交给
+                    # MoviePy 做 subclip/变速/Loop/resize/fps + zoom。
+                    if _is_image:
+                        _base_vid = "{output_dir}/temp-shot-base-{idx}.mp4".format(
+                            output_dir=output_dir, idx=_i
+                        )
+                        _convert_shot_with_ffmpeg(
+                            _vp, _dur, _base_vid, video_width, video_height,
+                            1.0, None, None,
+                        )
+                        _shot_temp_files.append(_base_vid)
+                        _src_for_zoom = _base_vid
+                    else:
+                        _src_for_zoom = _vp
+                    _c = _open_video_clip_quietly(_src_for_zoom)
+                    if _c.duration > _dur:
+                        _c = _c.subclipped(0, _dur)
+                    if normalized_clip_speed != 1.0:
+                        _c = _c.with_speed_scaled(normalized_clip_speed)
+                    if _c.duration < _dur:
+                        _c = _c.with_effects([Loop(duration=_dur)])
+                    if abs(_c.fps - fps) > 0.01:
+                        _c = _c.with_fps(fps)
+                    _cw, _ch = _c.size
+                    if _cw != video_width or _ch != video_height:
+                        _c = _c.resized(new_size=(video_width, video_height))
+                    if _transition == VideoTransitionMode.zoom_in.value:
+                        _c = video_effects.zoomin_transition(_c, 1)
+                    else:
+                        _c = video_effects.zoomout_transition(_c, 1)
+                    _write_videofile_with_codec_fallback(
+                        _c, _temp_vid,
+                        codec=_get_configured_video_codec(),
+                        logger=None, fps=fps,
+                        ffmpeg_params=_get_normalization_ffmpeg_params(),
+                        threads=threads,
+                    )
+                    close_clip(_c)
+                else:
+                    # 无转场 / fade / slide：纯 FFmpeg
+                    _convert_shot_with_ffmpeg(
+                        _vp, _dur, _temp_vid, video_width, video_height,
+                        normalized_clip_speed, _transition, _side,
+                    )
+                _shot_temp_files.append(_temp_vid)
+                _shot_concat_paths.append(_temp_vid)
+                _shot_concat_durations.append(_dur)
                 logger.info(
-                    "shot {i}: {src} -> {dur:.1f}s".format(
-                        i=_i + 1, src=os.path.basename(_vp), dur=_dur,
+                    "shot {i}: {src} -> {dst} ({dur:.1f}s)".format(
+                        i=_i + 1, src=os.path.basename(_vp),
+                        dst=os.path.basename(_temp_vid), dur=_dur,
                     )
                 )
             except Exception as _exc:
-                logger.warning("shot {i} clip error: {err}".format(i=_i + 1, err=_exc))
+                logger.warning(
+                    "shot {i} conversion failed: {err}".format(i=_i + 1, err=_exc)
+                )
 
-        if not _shot_clips:
+        if not _shot_concat_paths:
             logger.error("shot-by-shot mode: no valid clips produced")
             return combined_video_path
 
-        # Concatenate all shot clips
-        _final = concatenate_videoclips(_shot_clips, method="chain")
-        _total_shot_dur = sum(_c.duration for _c in _shot_clips)
+        # 总时长不足时循环追加，由 concat 的 max_duration 截断到目标时长。
+        _concat_paths = list(_shot_concat_paths)
+        _total_shot_dur = sum(_shot_concat_durations)
         logger.info(
             "shot-by-shot: {n} shots, total {dur:.1f}s".format(
-                n=len(_shot_clips), dur=_total_shot_dur,
+                n=len(_shot_concat_paths), dur=_total_shot_dur,
             )
         )
-        # If total is shorter than required, loop the last clip
         if _total_shot_dur < required_video_duration:
             _gap = required_video_duration - _total_shot_dur
             logger.info(
                 "shot-by-shot: {total:.1f}s < required {req:.1f}s, "
-                "cycling through all clips for {gap:.1f}s".format(
+                "cycling clips for {gap:.1f}s".format(
                     total=_total_shot_dur, req=required_video_duration, gap=_gap,
                 )
             )
-            _loops = []
-            _looped = 0.0
-            _n = len(_shot_clips)
+            _n = len(_shot_concat_paths)
             _idx = 0
+            _looped = 0.0
             while _looped < _gap:
-                # 只追加缺口所需的片段长度，避免整段追加导致画面总时长远超
-                # 音频时长（字幕结束后画面还在播）。
-                _remaining = _gap - _looped
-                _src = _shot_clips[_idx % _n]
-                if _src.duration <= _remaining:
-                    _loops.append(_src)
-                    _looped += _src.duration
-                else:
-                    _loops.append(_src.subclipped(0, _remaining))
-                    _looped += _remaining
+                _concat_paths.append(_shot_concat_paths[_idx % _n])
+                _looped += _shot_concat_durations[_idx % _n]
                 _idx += 1
-            _final = concatenate_videoclips(_shot_clips + _loops, method="chain")
 
-        _final.write_videofile(combined_video_path, fps=30, logger=None, ffmpeg_params=_get_normalization_ffmpeg_params(), threads=threads)
-        try:
-            _final.close()
-        except Exception:
-            pass  # non-critical cleanup
-        for _c in _shot_clips:
-            try:
-                _c.close()
-            except Exception:
-                pass  # non-critical cleanup
-        for _tf in _shot_temp_files:
-            try:
-                os.unlink(_tf)
-            except OSError:
-                pass
+        # 统一 FFmpeg concat（一次编码），替代 MoviePy 逐帧拼接重编码
+        concat_video_clips_with_ffmpeg(
+            clip_files=_concat_paths,
+            output_file=combined_video_path,
+            threads=threads,
+            output_dir=output_dir,
+            max_duration=required_video_duration,
+        )
+
+        delete_files(_shot_temp_files)
         import glob as _glob
         for _ap in _glob.glob(os.path.join(output_dir, "_aspect_*.png")):
             try:

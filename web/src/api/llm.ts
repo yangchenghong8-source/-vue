@@ -38,13 +38,13 @@ export interface SocialMetadataRequestBody {
 }
 
 export function generateScript(body: ScriptRequestBody): Promise<ScriptResult> {
-  return apiPost<ScriptResult>('/api/v1/llm/scripts', body)
+  return apiPost<ScriptResult>('/api/v1/scripts', body)
 }
 
 export function generateTerms(body: TermsRequestBody): Promise<{ video_terms: string[] }> {
-  return apiPost<{ video_terms: string[] }>('/api/v1/llm/terms', body)
+  return apiPost<{ video_terms: string[] }>('/api/v1/terms', body)
 }
 
 export function generateSocialMetadata(body: SocialMetadataRequestBody): Promise<SocialMetadata> {
-  return apiPost<SocialMetadata>('/api/v1/llm/social-metadata', body)
+  return apiPost<SocialMetadata>('/api/v1/social-metadata', body)
 }

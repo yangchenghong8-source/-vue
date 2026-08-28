@@ -3,7 +3,7 @@
     <template #header>
       <div class="panel-header">
         <span>任务管理</span>
-        <el-button size="small" :icon="Refresh" circle @click="refresh" />
+        <el-button size="small" :icon="Refresh" circle @click="refresh()" />
       </div>
     </template>
 
@@ -110,6 +110,7 @@ import {
 } from '@/api/tasks'
 import { pauseTask, resumeTask } from '@/api/helper'
 import VideoPlayerDialog from './VideoPlayerDialog.vue'
+import { subjectOf } from '@/utils/task'
 
 const PAGE_SIZE = 100
 
@@ -123,6 +124,7 @@ const playerVisible = ref(false)
 const playerUri = ref<string | null>(null)
 
 let timer: ReturnType<typeof setInterval> | null = null
+let refreshing = false
 
 const filteredTasks = computed(() => {
   switch (activeTab.value) {
@@ -149,11 +151,6 @@ function stateInfo(state: number): { text: string; type: 'danger' | 'success' | 
   return { text: '历史', type: 'info' }
 }
 
-function subjectOf(task: TaskItem): string {
-  const p = task.params as Record<string, unknown> | undefined
-  return (p?.video_subject as string) || task.task_id
-}
-
 function formatTime(task: TaskItem): string {
   const raw = (task.updated_at as string) || (task.created_at as string) || ''
   if (!raw) return '—'
@@ -161,9 +158,10 @@ function formatTime(task: TaskItem): string {
   return s.replace('T', ' ').slice(0, 19)
 }
 
-async function refresh() {
-  if (loading.value) return
-  loading.value = true
+async function refresh(silent = false) {
+  if (refreshing) return
+  refreshing = true
+  if (!silent) loading.value = true
   try {
     const data = await getTasks(page.value, PAGE_SIZE)
     tasks.value = data.tasks
@@ -171,7 +169,8 @@ async function refresh() {
   } catch {
     // 拦截器已提示
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
+    refreshing = false
   }
 }
 
@@ -225,9 +224,9 @@ async function onDelete(task: TaskItem) {
 }
 
 function firstVideoUri(task: TaskItem): string | null {
-  const combined = task.combined_videos as string[] | undefined
   const videos = task.videos as string[] | undefined
-  const list = combined?.length ? combined : videos
+  const combined = task.combined_videos as string[] | undefined
+  const list = videos?.length ? videos : combined
   return list?.length ? list[0] : null
 }
 
@@ -268,7 +267,7 @@ async function onDownload(task: TaskItem) {
 
 onMounted(() => {
   refresh()
-  timer = setInterval(refresh, 2000)
+  timer = setInterval(() => refresh(true), 2000)
 })
 
 onUnmounted(() => {

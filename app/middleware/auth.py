@@ -5,7 +5,7 @@ When MPT_API_AUTH_KEY is configured, all /api/* requests must include
 an ``Authorization: Bearer <key>`` header.
 """
 
-from fastapi import Request, Response
+from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from loguru import logger

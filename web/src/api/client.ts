@@ -10,6 +10,20 @@ export interface ApiEnvelope<T = unknown> {
 
 export const TOKEN_KEY = 'mpt_access_token'
 
+// 视频流/下载接口由浏览器原生 <video>/<a> 标签请求，不经过 axios，
+// 无法携带 Authorization 头；登录时把 token 同步写入同名 cookie，
+// 后端认证在无 Authorization 头时会回退读取该 cookie。
+export const ACCESS_TOKEN_COOKIE = TOKEN_KEY
+const ACCESS_TOKEN_MAX_AGE_SECONDS = 7 * 24 * 60 * 60 // 与后端 JWT_EXPIRE_MINUTES（7 天）一致
+
+export function setAuthCookie(token: string): void {
+  document.cookie = `${ACCESS_TOKEN_COOKIE}=${encodeURIComponent(token)}; path=/; SameSite=Lax; max-age=${ACCESS_TOKEN_MAX_AGE_SECONDS}`
+}
+
+export function clearAuthCookie(): void {
+  document.cookie = `${ACCESS_TOKEN_COOKIE}=; path=/; SameSite=Lax; max-age=0`
+}
+
 const client: AxiosInstance = axios.create({
   baseURL: '/',
   timeout: 300000,
@@ -19,6 +33,7 @@ const client: AxiosInstance = axios.create({
 client.interceptors.request.use((config) => {
   const token = localStorage.getItem(TOKEN_KEY)
   if (token) {
+    setAuthCookie(token)
     config.headers = config.headers || {}
     config.headers.Authorization = `Bearer ${token}`
   }
@@ -34,6 +49,7 @@ client.interceptors.response.use(
 
     if (status === 401) {
       localStorage.removeItem(TOKEN_KEY)
+      clearAuthCookie()
       const onAuthPage =
         location.pathname.startsWith('/login') || location.pathname.startsWith('/register')
       if (onAuthPage) {

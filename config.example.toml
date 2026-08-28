@@ -346,7 +346,7 @@ hide_log = false
 # below only when you want to define initial defaults manually.
 # language = "zh"
 # tts_server = "azure-tts-v1"
-# voice_name = ""
+# voice_name = "zh-CN-YunyangNeural-Male"
 # font_name = "MicrosoftYaHeiBold.ttc"
 # font_size = 60
 # text_fore_color = "#FFFFFF"

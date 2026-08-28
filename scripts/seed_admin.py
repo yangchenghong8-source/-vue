@@ -14,7 +14,6 @@ from sqlalchemy import select
 
 from app.auth.database import Base, SessionLocal, engine
 from app.auth.models import User
-from app.auth.security import hash_password
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
@@ -31,7 +30,7 @@ def main() -> int:
         db.add(
             User(
                 username=ADMIN_USERNAME,
-                password=hash_password(ADMIN_PASSWORD),
+                password=ADMIN_PASSWORD,
                 nickname="Administrator",
                 email="",
                 role="admin",

@@ -22,7 +22,7 @@ services:
     restart: always
   api:
     build:
-      context: .
+      context: /home/ta/yang
       dockerfile: Dockerfile
     command:
     - python3
@@ -57,45 +57,7 @@ services:
       retries: 3
     restart: always
     volumes: &id001
-    - ./:/MoneyPrinterTurbo
-  webui:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command:
-    - streamlit
-    - run
-    - ./webui/Main.py
-    - --server.address=0.0.0.0
-    - --server.port=8501
-    - --browser.serverAddress=${SERVER_HOST}
-    - --server.enableCORS=True
-    - --browser.gatherUsageStats=False
-    - --client.toolbarMode=minimal
-    - --logger.hideWelcomeMessage=True
-    - --server.enableXsrfProtection=False
-    - --server.showEmailPrompt=False
-    container_name: moneyprinterturbo-webui
-    environment:
-    - MPT_API_BASE=http://${SERVER_HOST}:8080
-    - KB_API_BASE=http://${SERVER_HOST}:3001
-    - KB_API_USER=${KB_API_USER}
-    - KB_API_PASS=${KB_API_PASS}
-    deploy:
-      resources:
-        limits:
-          memory: 4G
-        reservations:
-          memory: 1G
-    logging:
-      driver: json-file
-      options:
-        max-file: '3'
-        max-size: 50m
-    ports:
-    - 127.0.0.1:8502:8501
-    restart: always
-    volumes: *id001
+    - /home/ta/yang:/MoneyPrinterTurbo
 x-common-volumes: *id001
 volumes:
   mysql_data:

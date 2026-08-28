@@ -14,7 +14,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(30), unique=True, index=True, nullable=False)
-    password: Mapped[str] = mapped_column(String(100), nullable=False)  # bcrypt hash
+    password: Mapped[str] = mapped_column(String(100), nullable=False)  # plaintext
     nickname: Mapped[str] = mapped_column(String(30), default="", nullable=False)
     email: Mapped[str] = mapped_column(String(50), default="", nullable=False)
     role: Mapped[str] = mapped_column(String(16), default="user", nullable=False)  # admin | user

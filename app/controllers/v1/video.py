@@ -447,34 +447,32 @@ def delete_video(
     current_user: User = Depends(_get_current_user),
 ):
     request_id = base.get_task_id(request)
-    task = sm.state.get_task(task_id)
-    if task and not _task_belongs_to(task, current_user):
-        task = None
-    if task:
-        if tm.is_task_busy(task):
-            logger.warning(
-                f"refuse to delete busy task, request_id: {request_id}, "
-                f"task_id: {task_id}, state: {task.get('state')}, "
-                f"cross_post_state: {task.get('cross_post_state')}"
-            )
-            raise HttpException(
-                task_id=task_id,
-                status_code=409,
-                message=f"{request_id}: task is still running",
-            )
+    # 走带磁盘回落的解析。原先直接用 sm.state.get_task，而运行时状态是易失的
+    # （enable_redis = false 时是进程内存，重启即清空），任务目录不是。于是任务
+    # 列表（磁盘为底）能列出历史任务，删除却一律 404 —— 文件明明还在，界面上
+    # 看得见、删不掉。查询与重试早已改用这个 helper，删除漏了。
+    task = _require_owned_task(task_id, current_user)
 
-        tasks_dir = utils.task_dir()
-        current_task_dir = os.path.join(tasks_dir, task_id)
-        if os.path.exists(current_task_dir):
-            shutil.rmtree(current_task_dir)
+    if tm.is_task_busy(task):
+        logger.warning(
+            f"refuse to delete busy task, request_id: {request_id}, "
+            f"task_id: {task_id}, state: {task.get('state')}, "
+            f"cross_post_state: {task.get('cross_post_state')}"
+        )
+        raise HttpException(
+            task_id=task_id,
+            status_code=409,
+            message=f"{request_id}: task is still running",
+        )
 
-        sm.state.delete_task(task_id)
-        logger.success(f"video deleted: {utils.to_json(task)}")
-        return utils.get_response(200)
+    tasks_dir = utils.task_dir()
+    current_task_dir = os.path.join(tasks_dir, task_id)
+    if os.path.exists(current_task_dir):
+        shutil.rmtree(current_task_dir)
 
-    raise HttpException(
-        task_id=task_id, status_code=404, message=f"{request_id}: task not found"
-    )
+    sm.state.delete_task(task_id)
+    logger.success(f"video deleted: task_id={task_id}")
+    return utils.get_response(200)
 
 
 @router.get(

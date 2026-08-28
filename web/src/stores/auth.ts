@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { TOKEN_KEY, apiGet } from '@/api/client'
+import { TOKEN_KEY, apiGet, setAuthCookie, clearAuthCookie } from '@/api/client'
 
 export interface AuthUser {
   id: number
@@ -30,6 +30,7 @@ export const useAuthStore = defineStore('auth', {
     setToken(token: string) {
       this.token = token
       localStorage.setItem(TOKEN_KEY, token)
+      setAuthCookie(token)
     },
     setUser(user: AuthUser) {
       this.user = user
@@ -38,6 +39,7 @@ export const useAuthStore = defineStore('auth', {
       this.token = ''
       this.user = null
       localStorage.removeItem(TOKEN_KEY)
+      clearAuthCookie()
     },
     async fetchMe(): Promise<boolean> {
       try {

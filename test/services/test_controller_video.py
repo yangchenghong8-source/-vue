@@ -125,6 +125,17 @@ class TestVideoControllerTasks(unittest.TestCase):
     def _request():
         return SimpleNamespace(headers={"x-task-id": "request-123"})
 
+    @staticmethod
+    def _user(user_id="1", role="admin"):
+        """构造鉴权用的最小 user 对象。
+
+        端点签名里的 ``current_user`` 默认值是 ``Depends(...)``，那是给 FastAPI
+        解析用的哨兵。直接调用函数而不显式传入的话，哨兵会漏进鉴权逻辑，报
+        ``'Depends' object has no attribute 'role'`` —— 与被测行为无关的假失败。
+        鉴权只读 ``id`` 和 ``role`` 两个属性，用 SimpleNamespace 即可。
+        """
+        return SimpleNamespace(id=user_id, role=role)
+
     def test_create_task_queues_requested_pipeline_stage(self):
         """创建任务应持久化初始状态，并把原请求模型与停止阶段交给队列。"""
         body = MagicMock()
@@ -292,7 +303,9 @@ class TestVideoControllerTasks(unittest.TestCase):
             ), patch.object(video_controller.sm.state, "delete_task") as delete_task:
                 with self.assertRaises(HttpException) as raised:
                     video_controller.delete_video(
-                        self._request(), task_id=task["task_id"]
+                        self._request(),
+                        task_id=task["task_id"],
+                        current_user=self._user(),
                     )
 
                 self.assertEqual(raised.exception.status_code, 409)
@@ -319,21 +332,89 @@ class TestVideoControllerTasks(unittest.TestCase):
             video_controller.os.path, "exists", return_value=False
         ), patch.object(video_controller.sm.state, "delete_task") as delete_task:
             response = video_controller.delete_video(
-                self._request(), task_id="completed-task"
+                self._request(), task_id="completed-task", current_user=self._user()
             )
 
         self.assertEqual(response["status"], 200)
         delete_task.assert_called_once_with("completed-task")
+
+    def test_delete_falls_back_to_disk_for_history_task(self):
+        """运行时状态查不到的历史任务也必须能删掉。
+
+        状态是易失的（``enable_redis = false`` 时就是进程内存，重启即清空），
+        任务目录不是。任务列表以磁盘为底，所以重启后列表里全是磁盘任务；删除
+        若只认内存状态，这些任务就变成"看得见、删不掉"，接口返回 404 而文件
+        仍在磁盘上。
+        """
+        with tempfile.TemporaryDirectory() as tasks_dir:
+            task_id = "history-task"
+            task_path = Path(tasks_dir) / task_id
+            task_path.mkdir()
+            (task_path / "final-1.mp4").write_bytes(b"stub")
+
+            with patch.object(
+                video_controller.sm.state, "get_task", return_value=None
+            ), patch.object(
+                # task_history 也是 ``from app.utils import utils``，同一个模块
+                # 对象，所以这一处 patch 对磁盘回落同时生效。
+                video_controller.utils,
+                "task_dir",
+                return_value=tasks_dir,
+            ), patch.object(
+                video_controller.sm.state, "delete_task"
+            ) as delete_task:
+                response = video_controller.delete_video(
+                    self._request(), task_id=task_id, current_user=self._user()
+                )
+
+            self.assertEqual(response["status"], 200)
+            delete_task.assert_called_once_with(task_id)
+            # 目录必须真的被删掉，而不是只返回 200。
+            self.assertFalse(task_path.exists())
+
+    def test_delete_rejects_history_task_of_another_user(self):
+        """磁盘回落不能绕过多租户隔离：别人的历史任务仍应 404。"""
+        with tempfile.TemporaryDirectory() as tasks_dir:
+            task_id = "someone-elses-task"
+            task_path = Path(tasks_dir) / task_id
+            task_path.mkdir()
+            (task_path / "final-1.mp4").write_bytes(b"stub")
+            (task_path / "task.json").write_text(
+                '{"task_id": "someone-elses-task", "user_id": "42"}',
+                encoding="utf-8",
+            )
+
+            with patch.object(
+                video_controller.sm.state, "get_task", return_value=None
+            ), patch.object(
+                video_controller.utils, "task_dir", return_value=tasks_dir
+            ), patch.object(
+                video_controller.sm.state, "delete_task"
+            ) as delete_task:
+                with self.assertRaises(HttpException) as raised:
+                    video_controller.delete_video(
+                        self._request(),
+                        task_id=task_id,
+                        current_user=self._user(user_id="7", role="user"),
+                    )
+
+            self.assertEqual(raised.exception.status_code, 404)
+            delete_task.assert_not_called()
+            # 鉴权失败绝不能顺手删掉别人的文件。
+            self.assertTrue(task_path.exists())
 
     def test_get_and_delete_missing_task_return_404(self):
         """查询或删除未知任务都应返回一致的 404，而不是空成功响应。"""
         with patch.object(video_controller.sm.state, "get_task", return_value=None):
             for operation in (
                 lambda: video_controller.get_task(
-                    self._request(), task_id="missing", query=MagicMock()
+                    self._request(),
+                    task_id="missing",
+                    query=MagicMock(),
+                    current_user=self._user(),
                 ),
                 lambda: video_controller.delete_video(
-                    self._request(), task_id="missing"
+                    self._request(), task_id="missing", current_user=self._user()
                 ),
             ):
                 with self.subTest(operation=operation):

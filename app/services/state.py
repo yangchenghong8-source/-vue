@@ -82,7 +82,9 @@ class MemoryState(BaseState):
             progress = 100
 
         with self._lock:
+            existing = self._tasks.get(task_id) or {}
             self._tasks[task_id] = {
+                **existing,
                 "task_id": task_id,
                 "state": state,
                 "progress": progress,

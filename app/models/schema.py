@@ -25,6 +25,13 @@ DEFAULT_BGM_VOLUME = 0.5
 # 一团。4px 缩放后仍有约 1px 的有效轮廓。
 DEFAULT_SUBTITLE_STROKE_WIDTH = 4.0
 
+# 默认音色。此前三处默认值不一致：VideoParams 是空串，SubtitleRequest 与
+# AudioRequest 是晓晓（女声），而 config.toml 的 [ui] 里存的是澳洲英语女声
+# en-AU-NatashaNeural-Female —— 前端实际预选哪个取决于读到的是哪一处。
+# 空串尤其是坏默认：voice.py 没有从 config 兜底的逻辑，省略该字段的 API 调用
+# 会直接抛 "invalid voice name"。统一收敛到这里。
+DEFAULT_VOICE_NAME = "zh-CN-YunyangNeural-Male"
+
 
 class VideoConcatMode(str, Enum):
     random = "random"
@@ -73,7 +80,7 @@ class VideoParams(BaseModel):
     {
       "video_subject": "",
       "video_aspect": "横屏 16:9（西瓜视频）",
-      "voice_name": "女生-晓晓",
+      "voice_name": "zh-CN-YunyangNeural-Male",
       "bgm_name": "random",
       "font_name": "STHeitiMedium 黑体-中",
       "text_color": "#FFFFFF",
@@ -120,7 +127,7 @@ class VideoParams(BaseModel):
     custom_audio_file: Optional[str] = None  # Custom audio file path, will ignore TTS and can still use Whisper subtitles
     video_language: Optional[str] = ""  # auto detect
 
-    voice_name: Optional[str] = ""
+    voice_name: Optional[str] = DEFAULT_VOICE_NAME
     voice_volume: Optional[float] = 1.0
     voice_rate: Optional[float] = 1.0
     bgm_type: Optional[str] = "random"
@@ -154,7 +161,7 @@ class VideoParams(BaseModel):
 class SubtitleRequest(BaseModel):
     video_script: str
     video_language: Optional[str] = ""
-    voice_name: Optional[str] = "zh-CN-XiaoxiaoNeural-Female"
+    voice_name: Optional[str] = DEFAULT_VOICE_NAME
     voice_volume: Optional[float] = 1.0
     voice_rate: Optional[float] = 1.2
     bgm_type: Optional[str] = "random"
@@ -175,7 +182,7 @@ class SubtitleRequest(BaseModel):
 class AudioRequest(BaseModel):
     video_script: str
     video_language: Optional[str] = ""
-    voice_name: Optional[str] = "zh-CN-XiaoxiaoNeural-Female"
+    voice_name: Optional[str] = DEFAULT_VOICE_NAME
     voice_volume: Optional[float] = 1.0
     voice_rate: Optional[float] = 1.2
     bgm_type: Optional[str] = "random"

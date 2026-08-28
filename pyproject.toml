@@ -14,7 +14,6 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     "moviepy==2.2.1",
-    "streamlit==1.58.0",
     "edge-tts==7.2.7",
     "fastapi==0.136.3",
     "uvicorn==0.32.1",
@@ -52,7 +51,6 @@ dev = [
 
 [tool.ruff.lint.per-file-ignores]
 # WebUI 需要先把项目根目录加入 sys.path，随后才能导入 app 包。
-"webui/Main.py" = ["E402"]
 
 [tool.coverage.run]
 # 统计分支覆盖率可以识别“代码行执行了，但条件的另一条分支从未验证”的情况，
@@ -60,7 +58,7 @@ dev = [
 # 因此与 app 服务层、服务启动入口和面向 Agent 用户发布的 Skill 脚本一起
 # 纳入统计，避免覆盖率只反映局部模块。
 branch = true
-source = ["app", "cli", "webui", "main", "docs/skill"]
+source = ["app", "cli", "main", "docs/skill"]
 
 [tool.coverage.report]
 # Python 3.11 和 3.13 完整测试的实测分支覆盖率均超过 70.4%。以 70%

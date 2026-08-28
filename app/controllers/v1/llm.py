@@ -1,5 +1,6 @@
-from fastapi import Request
+from fastapi import Depends, Request
 
+from app.auth.deps import _get_current_user
 from app.controllers.v1.base import new_router
 from app.models.schema import (
     VideoScriptRequest,
@@ -14,7 +15,7 @@ from app.utils import utils
 
 # authentication dependency
 # router = new_router(dependencies=[Depends(base.verify_token)])
-router = new_router()
+router = new_router(dependencies=[Depends(_get_current_user)])
 
 
 @router.post(

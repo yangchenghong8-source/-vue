@@ -288,6 +288,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
 
   // ── 提交生成（含校验 + 上传本地素材/背景音乐/自定义配音）──
   async function submitGeneration(): Promise<{ task_id: string } | null> {
+    if (generating.value) return null
     // 1. 主题与脚本不能同时为空（后端 /videos 额外要求 video_subject 非空）
     if (!params.video_subject.trim()) {
       ElMessage.error('请先填写视频主题（video_subject）')

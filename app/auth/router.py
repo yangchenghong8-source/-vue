@@ -10,7 +10,7 @@ from app.auth.database import get_db
 from app.auth.deps import _get_current_user
 from app.auth.models import User
 from app.auth.schemas import RegisterRequest, UserPublic
-from app.auth.security import create_access_token, hash_password, verify_password
+from app.auth.security import create_access_token
 from app.models.exception import HttpException
 from app.utils import utils
 
@@ -48,7 +48,6 @@ def register(body: RegisterRequest, request: Request, db: Session = Depends(get_
         {
             "access_token": token,
             "token_type": "bearer",
-            "password": body.password,
             "user": UserPublic.model_validate(user).model_dump(),
         },
     )

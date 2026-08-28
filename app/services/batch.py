@@ -10,14 +10,11 @@ Also supports JSON array input for programmatic clients.
 """
 
 import csv
-import io
-import json as _json
 from typing import Any
 
 from loguru import logger
 
 from app.models.schema import TaskVideoRequest
-from app.utils import utils
 
 
 # Default CSV column mapping

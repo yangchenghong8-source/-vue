@@ -69,15 +69,15 @@ RUN if [ "$PIP_USE_OFFICIAL" = "1" ]; then \
 COPY . .
 
 # Expose the port the app runs on
-EXPOSE 8501
+EXPOSE 8080
 
 # 容器内部必须监听 0.0.0.0，宿主机仍通过 docker 端口映射限制为 127.0.0.1。
 # browser.serverAddress 只决定浏览器展示的访问地址，不能替代 server.address。
-CMD ["streamlit", "run", "./webui/Main.py", "--server.address=0.0.0.0", "--server.port=8501", "--browser.serverAddress=127.0.0.1", "--server.enableCORS=True", "--browser.gatherUsageStats=False", "--client.toolbarMode=minimal", "--logger.hideWelcomeMessage=True", "--server.showEmailPrompt=False"]
+CMD ["python3", "main.py"]
 
 
 # Health check: verify the Streamlit app is responding
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -f http://localhost:8501/_stcore/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -f http://localhost:8080/docs || exit 1
 
 # 1. Build the Docker image using the following command
 # docker build -t moneyprinterturbo .

@@ -8,7 +8,6 @@ Provides:
 """
 
 import os
-import sys
 import uuid
 from contextvars import ContextVar
 
