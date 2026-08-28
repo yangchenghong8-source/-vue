@@ -14,6 +14,17 @@ warnings.filterwarnings(
     message="Field name.*shadows an attribute in parent.*",
 )
 
+# 背景音乐默认音量。内置 resource/songs 素材本身平均电平约 -21 dB，旧默认值
+# 0.2（-14 dB）叠加后成片里 BGM 只有约 -41 dB，比旁白低 22 dB —— 混音确实
+# 发生了，但在手机扬声器上完全听不见，表现为"没有背景音乐"。0.5（-6 dB）
+# 使 BGM 落在旁白下方约 12-15 dB，即常规旁白垫乐区间。
+DEFAULT_BGM_VOLUME = 0.5
+
+# 字幕描边宽度。字幕按 1080x1920 烧录，但前端预览把竖屏视频缩到约 270px 宽，
+# 1.5px 描边在该尺寸下不足 0.4px（亚像素，等于没有描边），白字压在照片上糊成
+# 一团。4px 缩放后仍有约 1px 的有效轮廓。
+DEFAULT_SUBTITLE_STROKE_WIDTH = 4.0
+
 
 class VideoConcatMode(str, Enum):
     random = "random"
@@ -68,7 +79,7 @@ class VideoParams(BaseModel):
       "text_color": "#FFFFFF",
       "font_size": 60,
       "stroke_color": "#000000",
-      "stroke_width": 1.5
+      "stroke_width": 4
     }
     """
 
@@ -114,7 +125,7 @@ class VideoParams(BaseModel):
     voice_rate: Optional[float] = 1.0
     bgm_type: Optional[str] = "random"
     bgm_file: Optional[str] = ""
-    bgm_volume: Optional[float] = 0.2
+    bgm_volume: Optional[float] = DEFAULT_BGM_VOLUME
     # 视频配乐供应商共用提示词，WebUI 新任务统一写入该字段。保留下面的
     # Sonilo 专用字段以兼容旧任务记录和现有 CLI 参数。
     video_music_prompt: str = Field(default="", max_length=2000)
@@ -130,7 +141,7 @@ class VideoParams(BaseModel):
 
     font_size: int = 60
     stroke_color: Optional[str] = "#000000"
-    stroke_width: float = 1.5
+    stroke_width: float = DEFAULT_SUBTITLE_STROKE_WIDTH
     n_threads: Optional[int] = 16
     paragraph_number: int = Field(default=1, ge=1, le=10)
     video_script_prompt: str = Field(default="", max_length=2000)
@@ -148,7 +159,7 @@ class SubtitleRequest(BaseModel):
     voice_rate: Optional[float] = 1.2
     bgm_type: Optional[str] = "random"
     bgm_file: Optional[str] = ""
-    bgm_volume: Optional[float] = 0.2
+    bgm_volume: Optional[float] = DEFAULT_BGM_VOLUME
     subtitle_position: Optional[str] = config.ui.get("subtitle_position", "bottom")
     font_name: Optional[str] = "STHeitiMedium.ttc"
     text_fore_color: Optional[str] = "#FFFFFF"
@@ -156,7 +167,7 @@ class SubtitleRequest(BaseModel):
     rounded_subtitle_background: bool = False
     font_size: int = 60
     stroke_color: Optional[str] = "#000000"
-    stroke_width: float = 1.5
+    stroke_width: float = DEFAULT_SUBTITLE_STROKE_WIDTH
     video_source: Optional[str] = "local"
     subtitle_enabled: Optional[str] = "true"
 
@@ -169,7 +180,7 @@ class AudioRequest(BaseModel):
     voice_rate: Optional[float] = 1.2
     bgm_type: Optional[str] = "random"
     bgm_file: Optional[str] = ""
-    bgm_volume: Optional[float] = 0.2
+    bgm_volume: Optional[float] = DEFAULT_BGM_VOLUME
     video_source: Optional[str] = "local"
 
 

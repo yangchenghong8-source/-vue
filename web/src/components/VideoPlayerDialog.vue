@@ -2,7 +2,8 @@
   <el-dialog
     v-model="visible"
     title="视频预览"
-    width="720px"
+    width="600px"
+    top="5vh"
     :before-close="onClose"
     destroy-on-close
   >
@@ -41,9 +42,16 @@ function onOpenNewTab() {
 </script>
 
 <style scoped>
+/* 不写死 width/height：由 max-* 双向约束，让浏览器按视频固有比例缩放。
+   旧样式 `width:100%; max-height:480px` 会把 9:16 竖屏压成 270x480 —— 竖屏
+   受高度约束，宽度只剩 270px，烧录时 60px 的字幕被缩到约 15px、1.5px 描边
+   缩到亚像素，于是"字幕看不见"。同时保留 max-width 以兼容 16:9 横屏素材，
+   否则横屏视频会撑破弹窗。 */
 .player {
-  width: 100%;
-  max-height: 480px;
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  max-height: 75vh;
   background: #000;
   border-radius: 4px;
 }

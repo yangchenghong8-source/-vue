@@ -1869,6 +1869,14 @@ def generate_video(
                 )
             )
         bgm_mix_succeeded = True
+        if bgm_enabled and not bgm_file:
+            # 音量规则通过了却解析不到文件（例如 resource/songs 为空、自定义
+            # 文件被安全校验拒绝）。这条以前是静默的：成片照常输出，只是没有
+            # BGM，日志里没有任何痕迹，排查时无法区分"没混"和"混了但太轻"。
+            logger.warning(
+                f"background music enabled but no file resolved: "
+                f"type={params.bgm_type}, volume={params.bgm_volume}"
+            )
         if bgm_file:
             try:
                 bgm_effects = [
@@ -1883,6 +1891,12 @@ def generate_video(
                 bgm_source_clip = clip_stack.enter_context(AudioFileClip(bgm_file))
                 bgm_clip = bgm_source_clip.with_effects(bgm_effects)
                 audio_clip = CompositeAudioClip([audio_clip, bgm_clip])
+                # 成功路径此前不打日志，导致"BGM 到底有没有生效"只能靠对成片
+                # 测音量才能回答。记录歌名与实际音量，让日志可自证。
+                logger.info(
+                    f"background music mixed: {os.path.basename(bgm_file)}, "
+                    f"type={params.bgm_type}, volume={params.bgm_volume}"
+                )
             except Exception:
                 bgm_mix_succeeded = False
                 # 记录完整堆栈和稳定上下文，便于区分文件解码、MoviePy 特效和
