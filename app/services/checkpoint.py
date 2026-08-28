@@ -12,6 +12,7 @@ from datetime import datetime
 from loguru import logger
 
 from app.models import const
+from app.services import task_history
 from app.utils import utils
 
 CHECKPOINT_FILE = "checkpoint.json"
@@ -83,7 +84,16 @@ def mark_failed(task_id: str, stage: str, error: str, progress: int = 0) -> str:
 
 
 def recover_stuck_tasks(state_service) -> int:
-    """On startup, mark PROCESSING tasks with checkpoints as FAILED."""
+    """On startup, mark interrupted tasks as FAILED.
+
+    以磁盘为准，而不是先查内存状态。原实现开头是 ``task =
+    state_service.get_task(task_id); if not task: continue``，而 MemoryState 在
+    重启后恒为空 —— 于是这个函数在默认配置下是空转，被中断的任务永远停在
+    "处理中"，既不会被标记失败，也不会出现在列表里。
+
+    判定条件：有 checkpoint（任务确实跑过）、没有最终成片（没跑完）、且
+    checkpoint 尚未标记失败。启动时不存在正在运行的任务，该推断是安全的。
+    """
     recovered = 0
     tasks_dir = utils.task_dir()
     if not os.path.exists(tasks_dir):
@@ -95,20 +105,31 @@ def recover_stuck_tasks(state_service) -> int:
         if not os.path.exists(os.path.join(task_dir, CHECKPOINT_FILE)):
             continue
         try:
-            task = state_service.get_task(task_id)
-            if not task:
-                continue
-            try:
-                state = int(task.get("state"))
-            except (TypeError, ValueError):
-                continue
-            if state != const.TASK_STATE_PROCESSING:
-                continue
             cp = load(task_id)
+            if cp and cp.get("state") == "failed":
+                continue
+            # 有最终成片说明任务其实已经完成，不能标记失败。
+            if task_history.find_final_video(task_dir):
+                continue
+
+            task = state_service.get_task(task_id)
+            if task is not None:
+                try:
+                    state = int(task.get("state"))
+                except (TypeError, ValueError):
+                    continue
+                if state != const.TASK_STATE_PROCESSING:
+                    continue
+
             stage = cp.get("stage", "unknown") if cp else "unknown"
             progress = cp.get("progress", 0) if cp else 0
             error = f"任务在阶段「{stage}」因服务器重启而中断 (进度: {progress}%)"
-            state_service.update_task(
+            # 必须用 patch_task 而不是 update_task：后者对不存在的任务会**创建**
+            # 记录。重启后内存状态本就是空的，用 update_task 会为每个磁盘上的
+            # 历史任务注入一条幽灵运行时记录 —— 即使该任务目录随后被删除，
+            # 这条记录仍留在内存里，把已不存在的任务显示在列表中。
+            # 磁盘 checkpoint 才是失败状态的载体，由磁盘扫描层读出。
+            state_service.patch_task(
                 task_id,
                 state=const.TASK_STATE_FAILED,
                 progress=progress,

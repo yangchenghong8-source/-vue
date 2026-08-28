@@ -36,6 +36,7 @@ from app.auth.models import User
 from app.services import bgm as bgm_service
 from app.services import state as sm
 from app.services import task as tm
+from app.services import task_history
 from app.utils import file_security, utils
 
 # 认证依赖项
@@ -78,13 +79,25 @@ def _task_belongs_to(task: dict, user: User) -> bool:
 
 
 def _require_owned_task(task_id: str, user: User) -> dict:
-    """返回属于当前用户的任务，否则按 404 处理（复用 ``_task_belongs_to``）。"""
+    """返回属于当前用户的任务，否则按 404 处理（复用 ``_task_belongs_to``）。
+
+    与 ``_require_owned_task_file`` 同样带磁盘回落，否则重启后历史任务的查询、
+    删除、重试全部失效。
+    """
     task = sm.state.get_task(task_id)
-    if not task or not _task_belongs_to(task, user):
-        raise HttpException(
-            task_id=task_id, status_code=404, message=f"{task_id}: task not found"
-        )
-    return task
+    if task and _task_belongs_to(task, user):
+        return task
+
+    if task is None:
+        disk_task = task_history.load_disk_task(task_id)
+        if disk_task is not None and task_history.owner_matches(
+            disk_task.get("user_id"), user.id, user.role == "admin"
+        ):
+            return disk_task
+
+    raise HttpException(
+        task_id=task_id, status_code=404, message=f"{task_id}: task not found"
+    )
 
 
 def _require_owned_task_file(file_path: str, user: User, request_id: str) -> None:
@@ -93,14 +106,31 @@ def _require_owned_task_file(file_path: str, user: User, request_id: str) -> Non
     产物路径形如 ``{task_id}/final-1.mp4``（相对 tasks 根目录）。取第一段作为
     task_id 并复用 ``_task_belongs_to`` 做多租户隔离；找不到任务或不属于当前
     用户一律按 404 处理，避免用不同状态码泄露任务是否存在。
+
+    内存 / Redis 状态查不到时**回落到磁盘**：状态是易失的（进程重启即清空），
+    而任务目录不是。少了这层回落，重启后所有历史视频都会因为查不到任务记录
+    而变成 404 —— 文件明明还在。
     """
     task_id = (file_path or "").replace("\\", "/").strip("/").split("/")[0]
     if not task_id:
         raise HttpException(
             task_id=request_id, status_code=404, message=f"{request_id}: file not found"
         )
+
     task = sm.state.get_task(task_id)
-    if not task or not _task_belongs_to(task, user):
+    if task:
+        if not _task_belongs_to(task, user):
+            raise HttpException(
+                task_id=request_id,
+                status_code=404,
+                message=f"{request_id}: file not found",
+            )
+        return
+
+    is_admin = user.role == "admin"
+    if not task_history.task_exists(task_id) or not task_history.owner_matches(
+        task_history.read_owner(task_id), user.id, is_admin
+    ):
         raise HttpException(
             task_id=request_id, status_code=404, message=f"{request_id}: file not found"
         )
@@ -108,6 +138,9 @@ def _require_owned_task_file(file_path: str, user: User, request_id: str) -> Non
 
 _COPY_CHUNK_BYTES = 1024 * 1024
 _MAX_VIDEO_MATERIAL_BYTES = 500 * 1024 * 1024
+# 合并磁盘历史时一次性取出的运行时任务上限。运行时状态只承载"正在跑"的任务，
+# 数量远小于磁盘历史，取一页足够覆盖。
+_RUNTIME_TASK_SCAN_LIMIT = 200
 
 
 def _remove_upload_file(file_path: str) -> None:
@@ -286,7 +319,10 @@ def create_task(
         }
         if current_user is not None:
             task["user_id"] = str(current_user.id)
-        sm.state.update_task(task_id, user_id=task.get("user_id"))
+        sm.state.update_task(task_id, user_id=task.get("user_id"), params=task["params"])
+        # 归属同时落盘：内存状态会随进程消失，磁盘记录不会。少了这一步，
+        # 重启后所有任务都退化成无主的 legacy 任务（仅 admin 可见）。
+        task_history.write_owner(task_id, task.get("user_id"), body)
         task_manager.add_task(tm.start, task_id=task_id, params=body, stop_at=stop_at)
         logger.success(f"Task created: {utils.to_json(task)}")
         return utils.get_response(200, task)
@@ -310,15 +346,42 @@ def get_all_tasks(
     page_size: int = Query(10, ge=1),
     current_user: User = Depends(_get_current_user),
 ):
-    tasks, total = sm.state.get_all_tasks(
-        page,
-        page_size,
+    request_id = base.get_task_id(request)
+    endpoint = config.app.get("endpoint", "").rstrip("/")
+    task_dir = utils.task_dir()
+    is_admin = current_user.role == "admin"
+
+    # 磁盘为底、运行时状态为覆盖层。反过来（只读运行时状态）会导致进程重启后
+    # 历史任务全部消失 —— 产物明明还在磁盘上。
+    disk_tasks = task_history.scan_tasks(user_id=current_user.id, is_admin=is_admin)
+    runtime_tasks, _runtime_total = sm.state.get_all_tasks(
+        1,
+        _RUNTIME_TASK_SCAN_LIMIT,
         user_id=current_user.id,
-        is_admin=current_user.role == "admin",
+        is_admin=is_admin,
     )
+    merged_tasks = task_history.merge_runtime(disk_tasks, runtime_tasks)
+
+    total = len(merged_tasks)
+    start = (page - 1) * page_size
+    tasks = merged_tasks[start : start + page_size]
+
+    def _task_to_public_data(task: dict) -> dict:
+        public_task = _public_task_data(task)
+        if "videos" in task:
+            public_task["videos"] = [
+                _task_file_to_uri(v, endpoint, task_dir, request_id)
+                for v in task["videos"]
+            ]
+        if "combined_videos" in task:
+            public_task["combined_videos"] = [
+                _task_file_to_uri(v, endpoint, task_dir, request_id)
+                for v in task["combined_videos"]
+            ]
+        return public_task
 
     response = {
-        "tasks": [_public_task_data(task) for task in tasks],
+        "tasks": [_task_to_public_data(task) for task in tasks],
         "total": total,
         "page": page,
         "page_size": page_size,
@@ -341,6 +404,17 @@ def get_task(
     task = sm.state.get_task(task_id)
     if task and not _task_belongs_to(task, current_user):
         task = None
+    if task is None:
+        # 运行时状态查不到时回落磁盘，让历史任务在重启后仍可查询、仍能拿到播放地址。
+        disk_task = task_history.load_disk_task(task_id)
+        if (
+            disk_task is not None
+            and task_history.is_presentable(disk_task)
+            and task_history.owner_matches(
+                disk_task.get("user_id"), current_user.id, current_user.role == "admin"
+            )
+        ):
+            task = disk_task
     if task:
         task_dir = utils.task_dir()
         response_task = _public_task_data(task)
@@ -805,7 +879,7 @@ async def batch_create_tasks(
                 "params": task_req.model_dump(),
                 "user_id": str(current_user.id),
             }
-            sm.state.update_task(task_id, user_id=task_data["user_id"])
+            sm.state.update_task(task_id, user_id=task_data["user_id"], params=task_data["params"])
             task_manager.add_task(tm.start, task_id=task_id, params=task_req, stop_at=stop_at)
             logger.success(f"Batch task created: {task_id} | subject: {raw_row.get('video_subject', '')[:50]}")
             results.append({

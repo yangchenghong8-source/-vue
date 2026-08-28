@@ -108,10 +108,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-task_dir = utils.task_dir()
-app.mount(
-    "/tasks", StaticFiles(directory=task_dir, html=True, follow_symlink=True), name=""
-)
-
+# 任务产物**不再**通过静态挂载暴露。
+#
+# 原先这里挂了 `/tasks` -> storage/tasks（StaticFiles，无鉴权），任何人只要
+# 知道或猜到 task_id 就能取走别人的视频。上游 MoneyPrinterTurbo 是单用户本地
+# 工具，这样做没问题；yang 引入了登录和多租户，就必须走带归属校验的接口。
+#
+# 播放走 GET /api/v1/stream/{task_id}/{file}，下载走 /api/v1/download/...，
+# 两者都过 _require_owned_task_file()。<video> 标签发不出 Authorization 头，
+# 由前端写入的同站 cookie mpt_access_token 承载凭证（见 app/auth/deps.py）。
 public_dir = utils.public_dir()
 app.mount("/", StaticFiles(directory=public_dir, html=True), name="")
