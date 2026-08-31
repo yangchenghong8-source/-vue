@@ -17,22 +17,11 @@
         />
       </el-form-item>
 
-      <div class="row">
-        <el-form-item label="视频语言">
-          <el-select v-model="store.params.video_language" placeholder="自动" clearable style="width: 100%">
-            <el-option v-for="l in LOCALES" :key="l" :label="l" :value="l" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="段落数量">
-          <el-input-number
-            v-model="store.params.paragraph_number"
-            :min="1"
-            :max="10"
-            controls-position="right"
-            style="width: 100%"
-          />
-        </el-form-item>
-      </div>
+      <el-form-item label="视频语言">
+        <el-select v-model="store.params.video_language" placeholder="自动" clearable style="width: 100%">
+          <el-option v-for="l in LOCALES" :key="l" :label="l" :value="l" />
+        </el-select>
+      </el-form-item>
 
       <el-collapse class="advanced">
         <el-collapse-item title="高级脚本文案设置" name="advanced">
@@ -228,11 +217,6 @@ async function onGenerateTerms() {
   font-weight: 400;
   font-size: 12px;
   color: #909399;
-}
-.row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
 }
 .advanced {
   margin-bottom: 16px;

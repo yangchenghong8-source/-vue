@@ -55,6 +55,9 @@ def _read_json(file_path: str) -> dict[str, Any]:
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
+    except FileNotFoundError:
+        # 历史任务目录可能缺少某个 json（建了没跑起来 / 测试遗留），属正常情况，静默跳过。
+        return {}
     except (OSError, ValueError) as exc:
         logger.debug(f"skip unreadable json: {file_path}, {exc}")
         return {}

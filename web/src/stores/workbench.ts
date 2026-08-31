@@ -95,7 +95,7 @@ const DEFAULT_PARAMS: WorkbenchParams = {
   subtitle_enabled: true,
   subtitle_position: 'bottom',
   custom_position: 70.0,
-  font_name: 'STHeitiMedium.ttc',
+  font_name: 'MicrosoftYaHeiBold.ttc',
   text_fore_color: '#FFFFFF',
   text_background_color: false,
   rounded_subtitle_background: false,

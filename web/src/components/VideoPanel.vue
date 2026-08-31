@@ -48,9 +48,9 @@
           :file-list="localFileList"
           :on-change="onLocalChange"
           :on-remove="onLocalRemove"
-          accept="video/*"
+          accept="video/*,image/jpeg,image/png"
         >
-          <el-button>选择视频文件</el-button>
+          <el-button>选择视频/图片文件</el-button>
           <template #tip>
             <div class="tip">上传后会暂存到服务端 local_videos 目录</div>
           </template>

@@ -20,6 +20,20 @@ services:
       timeout: 5s
       retries: 10
     restart: always
+  redis:
+    image: redis:7-alpine
+    container_name: mpt-redis
+    restart: always
+    volumes:
+    - redis_data:/data
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      interval: 10s
+      timeout: 5s
+      retries: 10
   api:
     build:
       context: /home/ta/yang
@@ -35,6 +49,7 @@ services:
     - AUTH_DATABASE_URL=mysql+pymysql://${MYSQL_USER:-mpt}:${MYSQL_PASSWORD:-mpt_secret}@mysql:3306/${MYSQL_DATABASE:-mpt}?charset=utf8mb4
     - JWT_SECRET_KEY=${JWT_SECRET_KEY:-change-me-in-production-please-9f8a7b6c}
     - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-10080}
+    - REDIS_HOST=redis
     deploy:
       resources:
         limits:
@@ -56,8 +71,12 @@ services:
       timeout: 5s
       retries: 3
     restart: always
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes: &id001
     - /home/ta/yang:/MoneyPrinterTurbo
 x-common-volumes: *id001
 volumes:
   mysql_data:
+  redis_data:

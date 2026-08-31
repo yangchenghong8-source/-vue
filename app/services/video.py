@@ -1732,7 +1732,7 @@ def generate_video(
     font_path = ""
     if params.subtitle_enabled:
         if not params.font_name:
-            params.font_name = "STHeitiMedium.ttc"
+            params.font_name = config.ui.get("font_name", "MicrosoftYaHeiBold.ttc")
         font_path = os.path.join(utils.font_dir(), params.font_name)
         if os.name == "nt":
             font_path = font_path.replace("\\", "/")
@@ -2036,7 +2036,11 @@ def generate_video(
         return bgm_mix_succeeded
 
 
-def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
+def preprocess_video(
+    materials: List[MaterialInfo],
+    clip_duration=4,
+    video_aspect: VideoAspect = VideoAspect.portrait,
+):
     # WebUI 在某些二次生成场景下可能传入空素材列表，这里直接返回空结果，避免抛出 NoneType 异常。
     if not materials:
         return []
@@ -2044,6 +2048,8 @@ def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
     # 仅返回通过预处理校验的素材，避免低分辨率图片继续进入后续的视频合成流程。
     valid_materials = []
     local_videos_dir = utils.storage_dir("local_videos", create=True)
+    aspect = VideoAspect(video_aspect)
+    video_width, video_height = aspect.to_resolution()
 
     for material in materials:
         if not material.url:
@@ -2098,34 +2104,38 @@ def preprocess_video(materials: List[MaterialInfo], clip_duration=4):
 
             if ext in const.FILE_TYPE_IMAGES:
                 logger.info(f"processing image: {material_source_path}")
-                # 探测尺寸时已经打开过一次素材，这里先释放探测句柄，再重新创建用于导出的图片 clip。
+                # 探测尺寸时已经打开过一次素材，这里先释放探测句柄，改用 FFmpeg 转换图片。
                 close_clip(clip)
-                # Create an image clip and set its duration to 3 seconds
-                clip = (
-                    ImageClip(material_source_path)
-                    .with_duration(clip_duration)
-                    .with_position("center")
-                )
-                # Apply a zoom effect using the resize method.
-                # A lambda function is used to make the zoom effect dynamic over time.
-                # The zoom effect starts from the original size and gradually scales up to 120%.
-                # t represents the current time, and clip.duration is the total duration of the clip (3 seconds).
-                # Note: 1 represents 100% size, so 1.2 represents 120% size.
-                zoom_clip = clip.resized(
-                    lambda t: 1 + (clip_duration * 0.03) * (t / clip.duration)
-                )
-
-                # Optionally, create a composite video clip containing the zoomed clip.
-                # This is useful when you want to add other elements to the video.
-                final_clip = CompositeVideoClip([zoom_clip])
-
-                # Output the video to a file.
+                # 直接用 FFmpeg 把图片转成目标分辨率的 mp4（scale + pad letterbox）。
+                # 高分辨率图片走 MoviePy rawvideo 管道时单帧过大，容易触发 Broken pipe；
+                # 这里复用 combine_videos 里成熟的 FFmpeg 转换逻辑，输出分辨率与最终合成一致。
                 video_file = f"{material_source_path}.mp4"
-                final_clip.write_videofile(video_file, fps=30, logger=None)
-                close_clip(clip)
-                close_clip(final_clip)
-                material.url = video_file
-                logger.success(f"image processed: {video_file}")
+                try:
+                    _ffmpeg = get_ffmpeg_binary()
+                    _scale_filter = (
+                        "scale={vw}:{vh}:force_original_aspect_ratio=decrease,"
+                        "pad={vw}:{vh}:(ow-iw)/2:(oh-ih)/2:black"
+                    ).format(vw=video_width, vh=video_height)
+                    _cmd = [
+                        _ffmpeg,
+                        "-loop", "1",
+                        "-i", material_source_path,
+                        "-t", str(clip_duration),
+                        "-vf", _scale_filter,
+                        "-r", "30",
+                        "-pix_fmt", "yuv420p",
+                        "-y",
+                        video_file,
+                    ]
+                    subprocess.run(_cmd, capture_output=True, check=True)
+                    material.url = video_file
+                    logger.success(f"image processed: {video_file}")
+                except Exception as exc:
+                    logger.warning(
+                        f"failed to convert image to video: {material_source_path}, "
+                        f"error: {str(exc)}"
+                    )
+                    continue
             else:
                 # 普通视频素材只需要读取尺寸做校验，校验完成后立即释放句柄即可。
                 close_clip(clip)
