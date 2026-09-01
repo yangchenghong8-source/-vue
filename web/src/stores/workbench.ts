@@ -269,6 +269,9 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       use_knowledge: params.use_knowledge,
       kb_doc_filenames: params.kb_doc_filenames,
       video_script_duration: params.video_script_duration,
+      match_materials_to_script: params.match_materials_to_script,
+      video_source: params.video_source,
+      kb_category: params.kb_category,
     })
     params.video_script = result.video_script
     return result.video_script

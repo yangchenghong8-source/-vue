@@ -1,4 +1,5 @@
 from fastapi import Depends, Request
+from loguru import logger
 
 from app.auth.deps import _get_current_user
 from app.controllers.v1.base import new_router
@@ -11,6 +12,7 @@ from app.models.schema import (
     VideoTermsResponse,
 )
 from app.services import llm
+from app.services.kb_client import kb_client
 from app.utils import utils
 
 # authentication dependency
@@ -26,6 +28,56 @@ router = new_router(dependencies=[Depends(_get_current_user)])
 def generate_video_script(request: Request, body: VideoScriptRequest):
     use_kb = getattr(body, "use_knowledge", False)
     kb_docs = getattr(body, "kb_doc_filenames", None)
+
+    # 素材匹配脚本：素材优先，基于知识库素材生成脚本（主题作为叙事主线）
+    match_materials = getattr(body, "match_materials_to_script", False)
+    video_source = getattr(body, "video_source", None) or "pexels"
+    kb_category = getattr(body, "kb_category", None) or ""
+
+    if match_materials and video_source in ("knowledge_base", "jimeng"):
+        kb_media = []
+        try:
+            if kb_category:
+                kb_media = kb_client.list_media_sampled(kb_category)
+            else:
+                kb_media = kb_client.relevant_media(
+                    body.video_subject or "", top_k=40, category=""
+                )
+        except Exception as _e:
+            logger.warning(f"generate_script: material fetch failed: {_e}")
+
+        if kb_media:
+            storyboard = llm.generate_script_from_materials(
+                kb_media=kb_media,
+                language=body.video_language,
+                paragraph_number=body.paragraph_number,
+                video_subject=body.video_subject,
+                video_script_prompt=body.video_script_prompt,
+                custom_system_prompt=body.custom_system_prompt,
+                target_duration=getattr(body, "video_script_duration", 0) or 0,
+                knowledge_context="",
+            )
+            if storyboard:
+                _parts = [
+                    str(s.get("text", "")).strip()
+                    for s in storyboard
+                    if str(s.get("text", "")).strip()
+                ]
+                _script = "\n\n".join(_parts).strip()
+                if _script:
+                    return utils.get_response(
+                        200,
+                        {
+                            "video_script": _script,
+                            "kb_info": {
+                                "used": True,
+                                "fallback": False,
+                                "chunks": len(kb_media),
+                                "empty": False,
+                            },
+                        },
+                    )
+
     result = llm.generate_script(
         video_subject=body.video_subject,
         language=body.video_language,

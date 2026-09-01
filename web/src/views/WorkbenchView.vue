@@ -4,6 +4,9 @@
       <el-header class="topbar" height="60px">
         <div class="brand">短视频生成器</div>
         <div class="spacer" />
+        <el-button text class="topbar-btn" :icon="Guide" @click="onOpenGuide">
+          使用教程
+        </el-button>
         <el-button text class="topbar-btn" :icon="Setting" @click="settingsVisible = true">
           设置
         </el-button>
@@ -32,7 +35,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Setting } from '@element-plus/icons-vue'
+import { Setting, Guide } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkbenchStore } from '@/stores/workbench'
 import ScriptPanel from '@/components/ScriptPanel.vue'
@@ -49,6 +52,10 @@ const store = useWorkbenchStore()
 
 const settingsVisible = ref(false)
 const taskManagerRef = ref<InstanceType<typeof TaskManager> | null>(null)
+
+function onOpenGuide() {
+  router.push('/guide')
+}
 
 function onLogout() {
   auth.clear()

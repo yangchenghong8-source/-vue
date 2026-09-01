@@ -14,6 +14,9 @@ export interface ScriptRequestBody {
   use_knowledge?: boolean
   kb_doc_filenames?: string[] | null
   video_script_duration?: number
+  match_materials_to_script?: boolean
+  video_source?: string
+  kb_category?: string
 }
 
 export interface TermsRequestBody {

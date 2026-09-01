@@ -210,6 +210,9 @@ class VideoScriptParams:
     use_knowledge: bool = False
     kb_doc_filenames: Optional[List[str]] = None
     video_script_duration: int = 0
+    match_materials_to_script: bool = False
+    video_source: Optional[str] = "pexels"
+    kb_category: Optional[str] = None
 
 
 class VideoTermsParams:
