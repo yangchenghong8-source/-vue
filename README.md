@@ -1,7 +1,13 @@
 # 短视频生成器 · 使用教程
 
 > 一款基于 AI 的短视频自动生成工具。只需输入一个视频主题，即可自动完成「脚本撰写 → 素材匹配 → 配音 → 字幕合成」全流程，快速产出一条完整短视频。
-
+主要分为几个流程
+当素材源选择知识库时
+![alt text](web/src/assets/images/guide-flow-1.png)
+当素材源选择知识库且不匹配脚本时
+![alt text](web/src/assets/images/guide-flow-2.png)
+当素材源选择pexels时
+![alt text](web/src/assets/images/guide-flow-3.png)
 ## 一、简介
 
 本系统是 MoneyPrinterTurbo 的多用户 Web 版本，支持账号注册登录、多租户隔离与任务管理。

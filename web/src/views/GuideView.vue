@@ -13,6 +13,19 @@
             一款基于 AI 的短视频自动生成工具。只需输入一个视频主题，即可自动完成「脚本撰写 → 素材匹配 → 配音 → 字幕合成」全流程，快速产出一条完整短视频。
           </p>
 
+          <h2>素材源选择流程</h2>
+          <p>视频素材来源的选择，主要分为以下几种流程：</p>
+
+          <h3>当素材源选择知识库时</h3>
+          <img class="guide-img" :src="flow1" alt="素材源选择 Pexels 时的流程" />
+
+          <h3>当素材源选择知识库且不匹配脚本时</h3>
+          <p>步骤和选择 Pexels 一样，但「素材匹配脚本」这个不用开。</p>
+          <img class="guide-img" :src="flow2" alt="素材源选择知识库时的流程" />
+
+          <h3>当素材源选择pexels时</h3>
+          <img class="guide-img" :src="flow3" alt="素材源选择知识库且不匹配脚本时的流程" />
+
           <h2>一、简介</h2>
           <p>本系统是 MoneyPrinterTurbo 的多用户 Web 版本，支持账号注册登录、多租户隔离与任务管理。</p>
           <p class="sub-title">核心能力</p>
@@ -130,6 +143,9 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
+import flow1 from '@/assets/images/guide-flow-1.png'
+import flow2 from '@/assets/images/guide-flow-2.png'
+import flow3 from '@/assets/images/guide-flow-3.png'
 
 const router = useRouter()
 
@@ -222,6 +238,20 @@ function goBack() {
   background: #f5f7fa;
   font-weight: 600;
   white-space: nowrap;
+}
+.guide-content h3 {
+  font-size: 15px;
+  margin: 20px 0 8px;
+  color: #303133;
+}
+.guide-content .guide-img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 8px 0 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 .guide-content code {
   background: #f0f2f5;
