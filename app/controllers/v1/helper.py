@@ -16,7 +16,9 @@ import tempfile
 from uuid import uuid4
 
 from fastapi import Depends, File, Query, Request, UploadFile
+from fastapi.responses import FileResponse
 from loguru import logger
+from PIL import Image, ImageDraw, UnidentifiedImageError
 
 from app.auth.deps import _get_current_user
 from app.auth.models import User
@@ -124,6 +126,19 @@ def list_fonts(request: Request, user: User = Depends(_get_current_user)):
                 fonts.append(name)
     fonts.sort()
     return utils.get_response(200, {"fonts": fonts})
+
+
+@router.get("/font-preview/{font_name}", summary="Load a subtitle font for browser preview")
+def get_font_preview(font_name: str, user: User = Depends(_get_current_user)):
+    """Serve one bundled font for the authenticated subtitle-style preview."""
+    safe_name = os.path.basename(font_name)
+    if safe_name != font_name or not safe_name.lower().endswith((".ttf", ".ttc")):
+        raise HttpException(task_id="helper", status_code=400, message="Invalid font name")
+    font_path = os.path.join(utils.font_dir(), safe_name)
+    if not os.path.isfile(font_path):
+        raise HttpException(task_id="helper", status_code=404, message="Font not found")
+    media_type = "font/ttf" if safe_name.lower().endswith(".ttf") else "font/collection"
+    return FileResponse(font_path, media_type=media_type, filename=safe_name)
 
 
 @router.get("/llm/providers", summary="List LLM provider registry")
@@ -380,11 +395,121 @@ def _remove_upload_file(file_path: str) -> None:
 
 
 _CUSTOM_AUDIO_UPLOAD_PREFIX = ".custom-audio-"
+_MAX_LOGO_BYTES = 10 * 1024 * 1024
+_MAX_LOGO_DIMENSION = 4096
+_LOGO_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+_LOGO_UPLOAD_PREFIX = ".logo-upload-"
+_LOGO_BACKGROUND_TOLERANCE = 28
+_LOGO_LIBRARY_DIRECTORY = 'logo'
 
 
 def _voiceover_error_message(exc: bgm_service.BgmUploadError) -> str:
     """把 BGM 服务的错误文案翻译成 custom-audio 语境，避免对配音上传误报“背景音乐”。"""
     return str(exc).replace("background music", "custom audio")
+
+
+def _make_logo_background_transparent(image: Image.Image) -> Image.Image:
+    """Convert a logo to RGBA and remove a solid background connected to its corners."""
+    rgba = image.convert("RGBA")
+    width, height = rgba.size
+    for point in {(0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)}:
+        ImageDraw.floodfill(
+            rgba,
+            point,
+            value=(0, 0, 0, 0),
+            thresh=_LOGO_BACKGROUND_TOLERANCE,
+        )
+    return rgba
+
+
+@router.get("/logos/library", summary="List server-provided video logos")
+def list_library_logos(user: User = Depends(_get_current_user)):
+    """Return selectable logo files from the project-level logo directory."""
+    logo_dir = os.path.join(utils.root_dir(), _LOGO_LIBRARY_DIRECTORY)
+    if not os.path.isdir(logo_dir):
+        return utils.get_response(200, {"logos": []})
+
+    logos = []
+    for entry in sorted(os.scandir(logo_dir), key=lambda item: item.name.casefold()):
+        if not entry.is_file() or pathlib.Path(entry.name).suffix.lower() not in _LOGO_SUFFIXES:
+            continue
+        logos.append({"name": pathlib.Path(entry.name).stem, "file": f"{_LOGO_LIBRARY_DIRECTORY}/{entry.name}"})
+    return utils.get_response(200, {"logos": logos})
+
+@router.post("/logos", summary="Upload a logo for the video corner watermark")
+def upload_logo(
+    request: Request,
+    file: UploadFile = File(...),
+    user: User = Depends(_get_current_user),
+):
+    """保存当前用户的 Logo，并验证它是可解码的静态图片。
+
+    文件名使用 UUID，上传文件按用户目录隔离。最终任务仍会在创建时再次检查路径，
+    因此客户端不能借由 ``logo_file`` 引用其它用户的图片或任意服务器文件。
+    """
+    request_id = base.get_task_id(request)
+    suffix = pathlib.Path((file.filename or "").strip()).suffix.lower()
+    if suffix not in _LOGO_SUFFIXES:
+        raise HttpException(
+            task_id=request_id,
+            status_code=400,
+            message=f"{request_id}: logo must be a PNG, JPEG, or WebP image",
+        )
+
+    owner_dir = os.path.join(utils.storage_dir("logos", create=True), str(user.id))
+    os.makedirs(owner_dir, exist_ok=True)
+    # 统一存为带 Alpha 通道的 PNG，避免 JPG/WebP 的不透明底色进入成片。
+    stored_name = f"{uuid4().hex}.png"
+    target_path = os.path.join(owner_dir, stored_name)
+    temp_path = ""
+    try:
+        descriptor, temp_path = tempfile.mkstemp(
+            prefix=_LOGO_UPLOAD_PREFIX, suffix=suffix, dir=owner_dir
+        )
+        with os.fdopen(descriptor, "wb") as buffer:
+            file.file.seek(0)
+            total_bytes = 0
+            while True:
+                chunk = file.file.read(_COPY_CHUNK_BYTES)
+                if not chunk:
+                    break
+                if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                    raise ValueError("logo upload must be binary")
+                total_bytes += len(chunk)
+                if total_bytes > _MAX_LOGO_BYTES:
+                    raise ValueError("logo exceeds the 10 MB limit")
+                buffer.write(chunk)
+            buffer.flush()
+            os.fsync(buffer.fileno())
+
+        if total_bytes == 0:
+            raise ValueError("logo file is empty")
+        # verify() 会检查图片结构；重新打开并 load() 才能触发像素解码错误。
+        with Image.open(temp_path) as image:
+            image.verify()
+        with Image.open(temp_path) as image:
+            image.load()
+            if image.width > _MAX_LOGO_DIMENSION or image.height > _MAX_LOGO_DIMENSION:
+                raise ValueError("logo dimensions must not exceed 4096 pixels")
+            processed_logo = _make_logo_background_transparent(image)
+            processed_logo.save(target_path, format="PNG", optimize=True)
+    except (UnidentifiedImageError, ValueError, OSError) as exc:
+        if isinstance(exc, OSError):
+            logger.warning(
+                f"logo upload failed: request_id={request_id}, error={type(exc).__name__}"
+            )
+            message = "failed to store logo"
+            status_code = 500
+        else:
+            message = str(exc) or "logo must be a valid image"
+            status_code = 400
+        raise HttpException(
+            task_id=request_id, status_code=status_code, message=f"{request_id}: {message}"
+        ) from exc
+    finally:
+        _remove_upload_file(temp_path)
+
+    return utils.get_response(200, {"file": f"storage/logos/{user.id}/{stored_name}"})
 
 
 @router.post("/custom-audio", summary="Upload a custom voiceover audio file")

@@ -178,6 +178,12 @@ class TestMaterialTlsVerification(unittest.TestCase):
         )
         self.assertEqual(result, ["/tmp/a1.mp4", "/tmp/b1.mp4", "/tmp/a2.mp4"])
 
+    def test_category_scope_accepts_a_selected_child_from_parent_coverage(self):
+        scope = "库尔斯特-商用净水直饮水,库尔斯特-实验室用超纯水,库尔斯特-智能化-智能水控"
+
+        self.assertTrue(material._category_in_scope("库尔斯特-智能化-智能水控", scope))
+        self.assertFalse(material._category_in_scope("科尔顿-医用-血液透析-AI机器人系列", scope))
+
 
 class TestCoverrProvider(unittest.TestCase):
     """

@@ -46,7 +46,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column label="操作" width="340" fixed="right">
         <template #default="{ row }">
           <el-button
             v-if="row.state === TASK_STATE.PROCESSING || row.state === TASK_STATE.PENDING"
@@ -76,6 +76,13 @@
           >
             下载
           </el-button>
+          <el-button
+            v-if="hasMaterialMatchReport(row)"
+            size="small"
+            @click="onMaterialReport(row)"
+          >
+            素材报告
+          </el-button>
           <el-button size="small" type="danger" plain @click="onDelete(row)">删除</el-button>
         </template>
       </el-table-column>
@@ -92,6 +99,59 @@
     />
 
     <VideoPlayerDialog v-model="playerVisible" :uri="playerUri" />
+
+    <el-dialog v-model="materialReportVisible" title="分镜素材匹配报告" width="760px">
+      <div v-loading="materialReportLoading">
+        <template v-if="materialReport">
+          <el-alert
+            :type="materialReport.unmatched ? 'warning' : 'success'"
+            :title="`已命中 ${materialReport.matched}/${materialReport.total} 个分镜`"
+            :description="materialReport.unmatched
+              ? `${materialReport.unmatched} 个分镜未找到可靠素材，已避免使用无关素材。`
+              : `所有素材均来自目录：${materialReport.kb_category}`"
+            :closable="false"
+            show-icon
+          />
+          <div class="report-meta">
+            检索目录：{{ materialReport.kb_category || '未记录' }}
+            · 关键词校验：{{ materialReport.require_keyword_overlap ? '已开启' : '未开启' }}
+          </div>
+          <div v-if="!materialReport.shots?.length" class="muted legacy-report">
+            此历史任务只保存了汇总结果；新生成的任务会展示每个镜头的命中依据。
+          </div>
+          <div v-for="shot in materialReport.shots" :key="shot.shot" class="match-shot">
+            <div class="match-shot-title">镜头 {{ shot.shot }}：{{ shot.text || '未提供镜头文案' }}</div>
+            <template v-if="shot.accepted">
+              <div class="match-content">
+                <video
+                  v-if="isVideoMedia(shot.accepted.name)"
+                  class="match-preview"
+                  :src="materialStreamUrl(shot.accepted.name)"
+                  muted
+                  preload="metadata"
+                />
+                <img
+                  v-else
+                  class="match-preview"
+                  :src="materialStreamUrl(shot.accepted.name)"
+                  :alt="shot.accepted.name"
+                />
+                <div>
+                  <el-tag type="success" size="small">已命中</el-tag>
+                  <div class="match-file">{{ shot.accepted.name }}</div>
+                  <div class="muted">命中词：{{ shot.accepted.overlap_terms.join('、') || '语义匹配' }}</div>
+                  <div class="muted">匹配分数：{{ formatScore(shot.accepted.score) }}</div>
+                </div>
+              </div>
+            </template>
+            <template v-else>
+              <el-tag type="warning" size="small">未命中</el-tag>
+              <div class="muted report-reason">{{ rejectionSummary(shot.rejections) }}</div>
+            </template>
+          </div>
+        </template>
+      </div>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -103,9 +163,13 @@ import {
   TASK_STATE,
   deleteTask,
   downloadUrl,
+  getMaterialMatchReport,
   getTask,
   getTasks,
   retryTask,
+  streamUrl,
+  type MaterialMatchCandidate,
+  type MaterialMatchReport,
   type TaskItem,
 } from '@/api/tasks'
 import { pauseTask, resumeTask } from '@/api/helper'
@@ -122,6 +186,10 @@ const activeTab = ref<'all' | 'processing' | 'complete' | 'failed'>('all')
 
 const playerVisible = ref(false)
 const playerUri = ref<string | null>(null)
+const materialReportVisible = ref(false)
+const materialReportLoading = ref(false)
+const materialReport = ref<MaterialMatchReport | null>(null)
+const materialReportTaskId = ref('')
 
 let timer: ReturnType<typeof setInterval> | null = null
 let refreshing = false
@@ -230,6 +298,53 @@ function firstVideoUri(task: TaskItem): string | null {
   return list?.length ? list[0] : null
 }
 
+function hasMaterialMatchReport(task: TaskItem): boolean {
+  const params = task.params
+  if (typeof params === 'string') {
+    return /['"]video_source['"]\s*:\s*['"]knowledge_base['"]/.test(params)
+  }
+  return Boolean(
+    params &&
+    params.video_source === 'knowledge_base',
+  )
+}
+
+function isVideoMedia(name: string): boolean {
+  return /\.(mp4|mov|avi|flv|mkv|webm)$/i.test(name)
+}
+
+function materialStreamUrl(name: string): string {
+  return streamUrl(`${materialReportTaskId.value}/${name}`)
+}
+
+function formatScore(score: number): string {
+  return Number.isFinite(score) ? score.toFixed(2) : '未提供'
+}
+
+function rejectionSummary(rejections: MaterialMatchCandidate[]): string {
+  if (rejections.some((item) => item.reason === 'no_keyword_overlap')) {
+    return '候选素材与分镜视觉描述没有有效关键词重合。'
+  }
+  if (rejections.some((item) => item.reason === 'below_semantic_threshold')) {
+    return '候选素材的语义匹配分数不足。'
+  }
+  return '当前目录内没有可用的可靠素材。'
+}
+
+async function onMaterialReport(task: TaskItem) {
+  materialReportVisible.value = true
+  materialReportLoading.value = true
+  materialReport.value = null
+  materialReportTaskId.value = task.task_id
+  try {
+    materialReport.value = await getMaterialMatchReport(task.task_id)
+  } catch {
+    materialReportVisible.value = false
+  } finally {
+    materialReportLoading.value = false
+  }
+}
+
 async function onPlay(task: TaskItem) {
   let uri = firstVideoUri(task)
   if (!uri) {
@@ -298,5 +413,45 @@ defineExpose({ refresh })
 .pagination {
   margin-top: 12px;
   justify-content: flex-end;
+}
+.report-meta {
+  margin: 12px 0;
+  color: #606266;
+  font-size: 13px;
+}
+.match-shot {
+  padding: 12px 0;
+  border-bottom: 1px solid #ebeef5;
+}
+.match-shot:last-child {
+  border-bottom: 0;
+}
+.match-shot-title {
+  margin-bottom: 8px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.match-content {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.match-preview {
+  width: 96px;
+  height: 64px;
+  flex: 0 0 auto;
+  border-radius: 4px;
+  background: #f5f7fa;
+  object-fit: cover;
+}
+.match-file {
+  margin: 6px 0;
+  word-break: break-all;
+}
+.report-reason {
+  margin-top: 8px;
+}
+.legacy-report {
+  margin-bottom: 12px;
 }
 </style>

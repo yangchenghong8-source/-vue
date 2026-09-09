@@ -50,6 +50,28 @@ class _FakeMoviePyClip:
         return self.with_audio_result
 
 
+class _FakeLogoClip(_FakeMoviePyClip):
+    """支持右上角 Logo 合成断言的最小图片 Clip。"""
+
+    def __init__(self, width=400, height=100):
+        super().__init__()
+        self.w = width
+        self.h = height
+        self.position = None
+
+    def resized(self, *, new_size):
+        self.w, self.h = new_size
+        return self
+
+    def with_position(self, position):
+        self.position = position
+        return self
+
+    def with_duration(self, duration):
+        self.duration = duration
+        return self
+
+
 class TestVideoService(unittest.TestCase):
     def setUp(self):
         self.original_app_config = dict(config.app)
@@ -149,6 +171,42 @@ class TestVideoService(unittest.TestCase):
         writer.assert_called_once()
         self.assertEqual(writer.call_args.kwargs["audio_fps"], 48000)
         self.assertEqual(source_video.close_calls, 1)
+
+    def test_generate_video_places_logo_in_top_right_corner(self):
+        params = vd.VideoParams(
+            video_subject="test",
+            subtitle_enabled=False,
+            bgm_type="",
+            logo_enabled=True,
+            logo_file="storage/logos/7/brand.png",
+        )
+        source_video = _FakeMoviePyClip()
+        voice_source = _FakeMoviePyClip()
+        final_video = _FakeMoviePyClip()
+        logo = _FakeLogoClip()
+        source_video.with_audio_result = final_video
+
+        with (
+            patch.object(vd, "_open_video_clip_quietly", return_value=source_video),
+            patch.object(vd, "AudioFileClip", return_value=voice_source),
+            patch.object(vd, "ImageClip", return_value=logo),
+            patch.object(vd.file_security, "resolve_path_within_directory", return_value="brand.png"),
+            patch.object(vd, "CompositeVideoClip", return_value=source_video),
+            patch.object(vd, "_write_videofile_with_codec_fallback") as writer,
+        ):
+            result = vd.generate_video(
+                video_path="combined.mp4",
+                audio_path="voice.mp3",
+                subtitle_path="",
+                output_file="final.mp4",
+                params=params,
+            )
+
+        self.assertTrue(result)
+        self.assertEqual((logo.w, logo.h), (151, 38))
+        self.assertEqual(logo.position, (897, 32))
+        self.assertEqual(logo.duration, source_video.duration)
+        writer.assert_called_once()
         self.assertEqual(voice_source.close_calls, 1)
         self.assertEqual(bgm_source.close_calls, 1)
         self.assertEqual(final_video.close_calls, 1)

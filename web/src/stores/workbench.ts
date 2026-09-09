@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getConfig, getFonts, getLlmProviders, getVoices, uploadCustomAudio } from '@/api/helper'
+import { getConfig, getFonts, getLlmProviders, getVoices, uploadCustomAudio, uploadLogo } from '@/api/helper'
 import { generateScript, generateTerms } from '@/api/llm'
 import { createVideo, uploadMusic, uploadVideoMaterial } from '@/api/tasks'
 import type { TaskVideoRequest } from '@/api/tasks'
@@ -35,6 +35,8 @@ export interface WorkbenchParams {
   material_driven_mode: boolean
   selected_category: string | null
   custom_audio_file: string | null
+  logo_enabled: boolean
+  logo_file: string | null
   video_language: string
   voice_name: string
   voice_volume: number
@@ -83,6 +85,8 @@ const DEFAULT_PARAMS: WorkbenchParams = {
   material_driven_mode: false,
   selected_category: null,
   custom_audio_file: null,
+  logo_enabled: false,
+  logo_file: null,
   video_language: '',
   voice_name: '',
   voice_volume: 1.0,
@@ -101,7 +105,7 @@ const DEFAULT_PARAMS: WorkbenchParams = {
   rounded_subtitle_background: false,
   font_size: 60,
   stroke_color: '#000000',
-  stroke_width: 4,
+  stroke_width: 2,
   n_threads: 16,
   paragraph_number: 1,
   video_script_prompt: '',
@@ -112,12 +116,9 @@ const DEFAULT_PARAMS: WorkbenchParams = {
 export const TTS_SERVERS = [
   { value: 'azure-tts-v1', label: 'Azure TTS V1' },
   { value: 'azure-tts-v2', label: 'Azure TTS V2' },
-  { value: 'siliconflow', label: 'SiliconFlow TTS' },
-  { value: 'gemini-tts', label: 'Google Gemini TTS' },
-  { value: 'mimo-tts', label: 'Xiaomi MiMo TTS' },
-  { value: 'elevenlabs', label: 'ElevenLabs TTS' },
-  { value: 'chatterbox', label: 'Chatterbox TTS' },
 ] as const
+
+export const DEFAULT_CHINESE_VOICE = 'zh-CN-YunyangNeural-Male'
 
 export const VIDEO_SOURCES = [
   { value: 'pexels', label: 'Pexels' },
@@ -155,6 +156,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   const localMaterials = ref<File[]>([])
   const customAudioFile = ref<File | null>(null)
   const uploadedBgmFile = ref<File | null>(null)
+  const logoFile = ref<File | null>(null)
   // 已持久化到 storage/local_videos 的素材（重新生成时复用）
   const persistedLocalMaterials = ref<MaterialInfo[]>([])
 
@@ -178,19 +180,20 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     const azure = voices.value.azure ?? []
     if (ttsServer.value === 'azure-tts-v2') return azure.filter((v) => v.includes('V2'))
     if (ttsServer.value === 'azure-tts-v1') return azure.filter((v) => !v.includes('V2'))
-    const map: Record<string, keyof VoiceMap> = {
-      siliconflow: 'siliconflow',
-      'gemini-tts': 'gemini',
-      'mimo-tts': 'mimo',
-      elevenlabs: 'elevenlabs',
-      chatterbox: 'chatterbox',
-    }
-    const key = map[ttsServer.value]
-    return key ? voices.value[key] ?? [] : []
+    return []
   })
 
+  const chineseVoices = computed(() => currentVoices.value.filter((voice) => /^zh-(CN|HK|TW)-/i.test(voice)))
+  const recommendedVoice = computed(() =>
+    chineseVoices.value.includes(DEFAULT_CHINESE_VOICE)
+      ? DEFAULT_CHINESE_VOICE
+      : chineseVoices.value[0] ?? '',
+  )
   const voiceOptions = computed(() =>
-    currentVoices.value.map((v) => ({ value: v, label: friendlyVoice(v) })),
+    chineseVoices.value.map((voice) => ({
+      value: voice,
+      label: `${friendlyVoice(voice)}${voice === recommendedVoice.value ? '（推荐）' : ''}`,
+    })),
   )
 
   // ── 资源加载 ──
@@ -243,14 +246,15 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     } else {
       voiceMode.value = savedTtsServer === 'no-voice' ? 'none' : 'tts'
     }
-    ttsServer.value = savedTtsServer === 'no-voice' ? 'azure-tts-v1' : savedTtsServer
+    ttsServer.value = TTS_SERVERS.some((server) => server.value === savedTtsServer)
+      ? savedTtsServer
+      : 'azure-tts-v1'
 
     const savedVoiceName = (ui.voice_name as string) || ''
-    if (savedVoiceName && currentVoices.value.includes(savedVoiceName)) {
+    if (savedVoiceName && chineseVoices.value.includes(savedVoiceName)) {
       params.voice_name = savedVoiceName
-    } else if (voiceMode.value === 'tts' && currentVoices.value.length) {
-      const zh = currentVoices.value.find((v) => v.toLowerCase().startsWith('zh-cn'))
-      params.voice_name = zh ?? currentVoices.value[0]
+    } else if (voiceMode.value === 'tts' && chineseVoices.value.length) {
+      params.voice_name = recommendedVoice.value
     }
 
     params.video_source = (app.video_source as string) || params.video_source
@@ -301,6 +305,13 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       ElMessage.error('请选择有效的视频素材来源')
       return null
     }
+    if (
+      (params.video_source === 'knowledge_base' || params.video_source === 'jimeng') &&
+      !params.kb_category.trim()
+    ) {
+      ElMessage.error('知识库模式请先选择一个具体素材目录')
+      return null
+    }
     const app = configApp.value
     if (params.video_source === 'pexels' && !app.pexels_api_keys) {
       ElMessage.error('请先在设置中填写 Pexels API Key')
@@ -320,6 +331,10 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     }
     if (voiceMode.value === 'upload' && !customAudioFile.value) {
       ElMessage.error('请先上传配音文件')
+      return null
+    }
+    if (params.logo_enabled && !logoFile.value && !params.logo_file) {
+      ElMessage.error('请先选择右上角 Logo 图片')
       return null
     }
 
@@ -352,6 +367,12 @@ export const useWorkbenchStore = defineStore('workbench', () => {
         body.custom_audio_file = res.file
       }
 
+      if (params.logo_enabled && logoFile.value) {
+        const res = await uploadLogo(logoFile.value)
+        body.logo_file = res.file
+        params.logo_file = res.file
+      }
+
       // 配音模式 → voice_name
       if (voiceMode.value === 'none') {
         body.voice_name = 'no-voice'
@@ -373,6 +394,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     localMaterials,
     customAudioFile,
     uploadedBgmFile,
+    logoFile,
     persistedLocalMaterials,
     voices,
     fonts,
@@ -383,6 +405,8 @@ export const useWorkbenchStore = defineStore('workbench', () => {
     configApp,
     configUi,
     currentVoices,
+    chineseVoices,
+    recommendedVoice,
     voiceOptions,
     loadResources,
     applyConfigDefaults,

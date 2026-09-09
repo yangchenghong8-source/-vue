@@ -75,6 +75,9 @@ fps = 30
 # 卡顿或最后一小段旁白没有画面的情况。
 _VIDEO_DURATION_SAFETY_MARGIN = 0.1
 _MIN_MATERIAL_DIMENSION = 480
+_LOGO_WIDTH_RATIO = 0.20
+_LOGO_MAX_HEIGHT_RATIO = 0.22
+_LOGO_MARGIN_RATIO = 0.03
 # 消息类应用和部分编码器会把画面尺寸向下取整，例如 WhatsApp 会把 9:16 的
 # 素材压成 478x850，比 480 少两个像素。直接按 480 硬卡会让这类素材全部被
 # 丢弃，最终以 "no valid materials found" 整体失败。这里留一个很小的容差，
@@ -1897,6 +1900,39 @@ def generate_video(
             _clip = _clip.with_position(("center", "center"))
         return _clip
 
+    def create_corner_logo_clip():
+        """载入 Logo 并固定在右上角，保留 PNG/WebP 的透明通道。"""
+        if not params.logo_enabled:
+            return None
+        raw_logo_path = (params.logo_file or "").replace("\\", "/").lstrip("/")
+        if raw_logo_path.startswith("logo/"):
+            relative_path = raw_logo_path[len("logo/") :]
+            if not relative_path or "/" in relative_path:
+                raise ValueError("invalid library logo path")
+            logo_path = file_security.resolve_path_within_directory(
+                os.path.join(utils.root_dir(), "logo"), relative_path
+            )
+        else:
+            prefix = "storage/logos/"
+            if not raw_logo_path.startswith(prefix):
+                raise ValueError("invalid logo file path")
+            logo_path = file_security.resolve_path_within_directory(
+                utils.storage_dir("logos", create=True), raw_logo_path[len(prefix) :]
+            )
+        logo = ImageClip(logo_path, transparent=True)
+        if logo.w <= 0 or logo.h <= 0:
+            logo.close()
+            raise ValueError("logo has invalid dimensions")
+        scale = min(
+            (video_width * _LOGO_WIDTH_RATIO) / logo.w,
+            (video_height * _LOGO_MAX_HEIGHT_RATIO) / logo.h,
+        )
+        logo = logo.resized(
+            new_size=(max(1, round(logo.w * scale)), max(1, round(logo.h * scale)))
+        )
+        margin = max(12, round(min(video_width, video_height) * _LOGO_MARGIN_RATIO))
+        return logo.with_position((video_width - logo.w - margin, margin))
+
     # MoviePy 的 CompositeAudioClip.close() 不会关闭子 AudioFileClip。这里用
     # ExitStack 显式持有所有原始文件 reader，确保成功、字幕异常、混音失败和
     # 视频写入失败等路径都能释放 FFmpeg 子进程，尤其避免 Windows 文件被占用。
@@ -1980,6 +2016,16 @@ def generate_video(
                     f"failed to mix background music: type={params.bgm_type}, "
                     f"file={bgm_file}"
                 )
+
+        logo_clip = create_corner_logo_clip()
+        if logo_clip is not None:
+            logo_clip = logo_clip.with_duration(video_clip.duration)
+            video_clip = CompositeVideoClip(
+                [video_clip, logo_clip], size=(video_width, video_height)
+            )
+            clip_stack.callback(logo_clip.close)
+            clip_stack.callback(video_clip.close)
+            logger.info(f"corner logo applied: {os.path.basename(params.logo_file or '')}")
 
         final_video_clip = video_clip.with_audio(audio_clip)
         clip_stack.callback(final_video_clip.close)

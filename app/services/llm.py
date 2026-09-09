@@ -930,9 +930,15 @@ def generate_storyboard(
         "",
         "## Instructions",
         f"Return ONLY a JSON array with {n} objects (one per paragraph). Each object must have:",
+        '- "visual_description": one concrete sentence describing what should be visible on screen',
+        '- "entities": array of important visible people, objects, or animals',
+        '- "actions": array of visible actions or states',
+        '- "scene": array containing location, time, weather, or other visual constraints',
         '- "keywords_cn": array of 2-3 Chinese search terms (2-8 chars each)',
         '- "keywords_en": array of 2-3 English search terms (1-3 words each)',
         "",
+        "The visual description must describe observable content, not abstract ideas or narration.",
+        "Do not invent entities, actions, or locations that are not supported by the paragraph.",
         "The keywords should describe the VISUAL content that best matches each paragraph.",
         "Consider: what would the camera show during this narration?",
         "",
@@ -966,6 +972,10 @@ def generate_storyboard(
                 storyboard.append({
                     "index": i + 1,
                     "text": para,
+                    "visual_description": str(shot.get("visual_description", "")).strip(),
+                    "entities": shot.get("entities", []) or [],
+                    "actions": shot.get("actions", []) or [],
+                    "scene": shot.get("scene", []) or [],
                     "keywords_cn": shot.get("keywords_cn", []),
                     "keywords_en": shot.get("keywords_en", []),
                 })
@@ -985,6 +995,10 @@ def generate_storyboard(
                                 storyboard.append({
                                     "index": i + 1,
                                     "text": para,
+                                    "visual_description": str(shot.get("visual_description", "")).strip(),
+                                    "entities": shot.get("entities", []) or [],
+                                    "actions": shot.get("actions", []) or [],
+                                    "scene": shot.get("scene", []) or [],
                                     "keywords_cn": shot.get("keywords_cn", []),
                                     "keywords_en": shot.get("keywords_en", []),
                                 })

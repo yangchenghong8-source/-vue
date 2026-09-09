@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import threading
 from typing import List
 from urllib.parse import urlencode
@@ -15,6 +16,57 @@ from app.services.kb_client import kb_client
 import jieba
 
 from app.services import llm
+
+
+def _semantic_score(item: dict) -> float:
+    """Read a KB relevance score without letting malformed metadata abort search."""
+    try:
+        return float(item.get("score", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+_MATERIAL_MATCH_STOPWORDS = {
+    "画面", "展示", "正在", "进行", "一个", "一些", "可以", "以及", "通过",
+    "设备", "系统", "素材", "图片", "视频", "现场", "镜头", "特写", "场景",
+    "工作", "运行", "使用", "相关", "产品", "系列", "效果", "介绍",
+}
+
+
+def _material_match_terms(text: str) -> set[str]:
+    """Extract specific searchable terms from a shot or KB media metadata."""
+    return {
+        token.strip().lower()
+        for token in jieba.lcut(str(text or ""))
+        if len(token.strip()) >= 2
+        and token.strip().lower() not in _MATERIAL_MATCH_STOPWORDS
+        and not token.strip().isdigit()
+    }
+
+
+def _material_overlap(query: str, item: dict) -> list[str]:
+    """Return concrete query terms supported by a KB item's metadata."""
+    source_text = " ".join(
+        str(item.get(key, "") or "")
+        for key in ("name", "description", "path")
+    )
+    return sorted(_material_match_terms(query) & _material_match_terms(source_text))
+
+
+def _category_in_scope(candidate_category: str, selected_scope: str) -> bool:
+    """Return whether a KB item belongs to one or more selected directories.
+
+    The cascader represents a parent-level selection as a comma-separated list
+    of leaf category prefixes.  Treating that list as one literal category made
+    every candidate fail with ``category_mismatch`` even though it belonged to
+    a selected child directory.
+    """
+    allowed_categories = {
+        item.strip()
+        for item in re.split(r"[,，]", selected_scope or "")
+        if item.strip()
+    }
+    return not allowed_categories or not candidate_category or candidate_category in allowed_categories
 
 # Thread-safe counter for API key rotation
 _api_key_counter = 0
@@ -732,76 +784,133 @@ def download_videos_by_storyboard(
     )
 
     # 句级语义阈值：低于此分数视为"无好素材"，回退主题词兜底/复用。
-    _MIN_SEMANTIC_SCORE = 0.3
+    _MIN_SEMANTIC_SCORE = float(config.app.get("material_match_min_score", 0.45))
+    _ALLOW_REUSE = bool(config.app.get("allow_material_reuse", False))
+    _REQUIRE_KEYWORD_OVERLAP = bool(
+        config.app.get("material_match_require_keyword_overlap", True)
+    )
     _low_coverage_shots = 0
+    match_details = []
+
+    def _accepted_candidate(item: dict, query: str, detail: dict):
+        """Return candidate metadata only when it passes all safety gates."""
+        name = str(item.get("name", "") or "")
+        score = _semantic_score(item)
+        category = str(item.get("category", "") or "")
+        candidate = {
+            "query": query,
+            "name": name,
+            "score": score,
+            "category": category,
+            "overlap_terms": _material_overlap(query, item),
+        }
+        if not _category_in_scope(category, kb_category):
+            candidate["reason"] = "category_mismatch"
+        elif name in seen_names:
+            candidate["reason"] = "already_used"
+        elif score < _MIN_SEMANTIC_SCORE:
+            candidate["reason"] = "below_semantic_threshold"
+        elif _REQUIRE_KEYWORD_OVERLAP and not candidate["overlap_terms"]:
+            candidate["reason"] = "no_keyword_overlap"
+        else:
+            return candidate
+        detail["rejections"].append(candidate)
+        return None
 
     for i, shot in enumerate(storyboard):
         shot_text = str(shot.get("text", "")).strip()
+        visual_description = str(shot.get("visual_description", "")).strip()
         keywords_cn = shot.get("keywords_cn", []) or []
+        entities = shot.get("entities", []) or []
+        actions = shot.get("actions", []) or []
+        scene = shot.get("scene", []) or []
 
         # ---- Layer 1: 句级语义匹配 ----
         # 用每句原文语义直接匹配素材的视觉描述，实现文案↔素材句级对应。
         # 不再把 video_subject 前置，避免主题词淹没分镜自身的语义。
-        _queries = [shot_text] if shot_text else []
-        for kw in keywords_cn:
-            if kw and kw not in _queries:
-                _queries.append(kw)
+        _queries = []
+        for query in [
+            visual_description,
+            " ".join(str(v).strip() for v in [*entities, *actions, *scene] if str(v).strip()),
+            *[str(v).strip() for v in keywords_cn if str(v).strip()],
+            shot_text,
+        ]:
+            if query and query not in _queries:
+                _queries.append(query)
+
+        shot_detail = {
+            "shot": i + 1,
+            "text": shot_text,
+            "queries": _queries,
+            "accepted": None,
+            "rejections": [],
+        }
 
         for qtext in _queries:
             results = kb_client.relevant_media(
                 qtext, top_k=8, category=kb_category
             )
-            for item in results:
-                name = item.get("name", "")
-                if name in seen_names:
+            for item in sorted(results, key=_semantic_score, reverse=True):
+                candidate = _accepted_candidate(item, qtext, shot_detail)
+                if not candidate:
                     continue
-                if float(item.get("score", 0.0)) < _MIN_SEMANTIC_SCORE:
-                    break  # 结果按分数降序，低于阈值则后续更差
+                name = candidate["name"]
                 seen_names.add(name)
                 local = kb_client.download_media(name, material_directory)
                 if local:
                     scene_materials[i] = local
+                    shot_detail["accepted"] = candidate
                     logger.info(
                         f"shot {i+1}/{n_shots} [{_durations[i]:.1f}s] "
                         f"KB semantic '{qtext[:40]}' -> {name}"
                     )
                     break
+                seen_names.discard(name)
+                candidate["reason"] = "download_failed"
+                shot_detail["rejections"].append(candidate)
             if scene_materials[i]:
                 break
 
         if scene_materials[i]:
+            match_details.append(shot_detail)
             continue
 
         # ---- Layer 2: 主题词兜底 ----
-        if video_subject:
+        if video_subject and not visual_description:
             results = kb_client.relevant_media(
                 video_subject, top_k=8, category=kb_category
             )
             for item in results:
-                name = item.get("name", "")
-                if name in seen_names:
+                candidate = _accepted_candidate(item, video_subject, shot_detail)
+                if not candidate:
                     continue
-                if float(item.get("score", 0.0)) < _MIN_SEMANTIC_SCORE:
-                    break
+                name = candidate["name"]
                 seen_names.add(name)
                 local = kb_client.download_media(name, material_directory)
                 if local:
                     scene_materials[i] = local
+                    shot_detail["accepted"] = candidate
                     logger.info(
                         f"shot {i+1}/{n_shots} [{_durations[i]:.1f}s] "
                         f"KB subject fallback '{video_subject[:40]}' -> {name}"
                     )
                     break
+                seen_names.discard(name)
+                candidate["reason"] = "download_failed"
+                shot_detail["rejections"].append(candidate)
 
         if not scene_materials[i]:
             _low_coverage_shots += 1
             logger.warning(
                 f"shot {i+1}/{n_shots}: no semantic match above threshold "
-                f"({_MIN_SEMANTIC_SCORE}), will attempt neighbor reuse"
+                f"({_MIN_SEMANTIC_SCORE}) or no metadata term overlap; "
+                "leaving it empty unless neighbor reuse is enabled"
             )
 
+        match_details.append(shot_detail)
+
     # ---- Layer 3: Neighbor reuse ----
-    for i in range(n_shots):
+    for i in (range(n_shots) if _ALLOW_REUSE else ()):
         if scene_materials[i]:
             continue
         for offset in range(1, n_shots):
@@ -833,6 +942,23 @@ def download_videos_by_storyboard(
     unique = len(set(m for m in scene_materials if m))
     missing = n_shots - found
 
+    try:
+        import json
+        with open(os.path.join(material_directory, "material_match.json"), "w", encoding="utf-8") as fp:
+            json.dump({
+                "threshold": _MIN_SEMANTIC_SCORE,
+                "allow_material_reuse": _ALLOW_REUSE,
+                "require_keyword_overlap": _REQUIRE_KEYWORD_OVERLAP,
+                "kb_category": kb_category,
+                "matched": found,
+                "total": n_shots,
+                "unmatched": missing,
+                "materials": [os.path.basename(path) if path else None for path in scene_materials],
+                "shots": match_details,
+            }, fp, ensure_ascii=False, indent=2)
+    except OSError as exc:
+        logger.warning(f"failed to save material match report: {exc}")
+
     if found == 0:
         logger.error(
             f"per-scene KB: ALL {n_shots} scenes failed to find materials"
@@ -841,7 +967,7 @@ def download_videos_by_storyboard(
 
     logger.success(
         f"per-scene KB: {found}/{n_shots} scenes have materials "
-        f"(unique sources: {unique}, missing after reuse: {missing})"
+        f"(unique sources: {unique}, missing: {missing})"
     )
 
     return scene_materials

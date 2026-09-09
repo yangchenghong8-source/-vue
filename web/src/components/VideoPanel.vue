@@ -27,7 +27,7 @@
         </el-select>
       </el-form-item>
 
-      <el-form-item v-if="isKbSource" label="知识库层级">
+      <el-form-item v-if="isKbSource" label="知识库素材目录" required>
         <el-cascader
           v-model="kbCategoryPath"
           :options="cascaderOptions"
@@ -35,10 +35,11 @@
           clearable
           filterable
           style="width: 100%"
-          placeholder="选择分类（可选中中间层级聚合）"
+          placeholder="选择末级目录或上级覆盖范围"
           @change="onKbCategoryChange"
         />
-        <div v-if="kbTreeEmpty" class="tip">知识库暂无分类素材，请先上传素材</div>
+        <div v-if="kbTreeEmpty" class="tip">知识库暂无可用目录，请先上传并完成素材分类</div>
+        <div v-else class="tip">选择末级目录时仅检索该目录；选择上级目录时会覆盖其下级目录。</div>
       </el-form-item>
 
       <el-form-item v-if="store.params.video_source === 'local'" label="本地素材">
@@ -81,19 +82,69 @@
 
       <el-form-item>
         <el-switch v-model="store.params.match_materials_to_script" active-text="素材匹配脚本" />
+        <div v-if="isKbSource" class="tip match-tip">
+          开启后按每个分镜的视觉描述、实体和场景，在所选目录中匹配素材；无可靠命中时会标记为未命中，不会用无关素材替代。
+        </div>
+      </el-form-item>
+
+      <el-divider content-position="left">右上角 Logo</el-divider>
+      <el-form-item>
+        <el-switch v-model="store.params.logo_enabled" active-text="添加右上角 Logo" />
+      </el-form-item>
+      <el-form-item v-if="store.params.logo_enabled" label="选择已有 Logo">
+  <el-select
+    v-model="store.params.logo_file"
+    placeholder="点击选择 Logo"
+    clearable
+    style="width: 100%"
+    @change="onLibraryLogoChange"
+  >
+    <el-option v-for="logo in libraryLogos" :key="logo.file" :label="logo.name" :value="logo.file" />
+  </el-select>
+  <div class="tip">服务器 logo 文件夹中的 Logo：{{ libraryLogos.length ? '点击名称即可选择' : '暂无可用图片' }}</div>
+</el-form-item>
+<el-form-item v-if="store.params.logo_enabled" label="选择 Logo 图片">
+        <el-upload
+          :auto-upload="false"
+          :limit="1"
+          accept="image/png,image/jpeg,image/webp"
+          :on-change="onLogoChange"
+          :on-remove="onLogoRemove"
+        >
+          <el-button>选择 Logo</el-button>
+          <template #tip>
+            <div class="tip">支持 PNG、JPG、WebP；透明 PNG 会保留透明背景。</div>
+          </template>
+        </el-upload>
       </el-form-item>
     </el-form>
   </el-card>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { UploadFile, UploadUserFile } from 'element-plus'
 import { useWorkbenchStore, VIDEO_SOURCES } from '@/stores/workbench'
-import { getKbMediaCategories } from '@/api/helper'
+import { getKbMediaCategories, getLibraryLogos } from '@/api/helper'
+import type { LibraryLogo } from '@/api/helper'
 import type { KbCategory } from '@/api/types'
 
 const store = useWorkbenchStore()
+const libraryLogos = ref<LibraryLogo[]>([])
+
+async function loadLibraryLogos() {
+  try {
+    libraryLogos.value = await getLibraryLogos()
+  } catch {
+    libraryLogos.value = []
+  }
+}
+
+function onLibraryLogoChange() {
+  store.logoFile = null
+}
+
+onMounted(loadLibraryLogos)
 
 const ASPECTS = [
   { value: '16:9', label: '横屏 16:9' },
@@ -130,12 +181,10 @@ function toCascaderOptions(nodes: KbCategory[]): CascaderOption[] {
 const cascaderOptions = computed<CascaderOption[]>(() => toCascaderOptions(kbTree.value))
 
 function findNodeByFull(nodes: KbCategory[], full: string): KbCategory | null {
-  for (const n of nodes) {
-    if ((n.full || n.name) === full) return n
-    if (n.children?.length) {
-      const hit = findNodeByFull(n.children, full)
-      if (hit) return hit
-    }
+  for (const node of nodes) {
+    if ((node.full || node.name) === full) return node
+    const hit = node.children?.length ? findNodeByFull(node.children, full) : null
+    if (hit) return hit
   }
   return null
 }
@@ -159,7 +208,7 @@ function onKbCategoryChange(value: string | number | (string | number)[]) {
   if (Array.isArray(value)) {
     const full = String(value[value.length - 1] ?? '')
     const node = full ? findNodeByFull(kbTree.value, full) : null
-    store.params.kb_category = node && node.prefixes ? node.prefixes.join(',') : ''
+    store.params.kb_category = node?.prefixes?.join(',') || ''
   } else {
     store.params.kb_category = ''
   }
@@ -178,6 +227,15 @@ function onLocalChange(file: UploadFile) {
 function onLocalRemove(file: UploadFile) {
   const idx = store.localMaterials.findIndex((f) => f.name === file.name)
   if (idx >= 0) store.localMaterials.splice(idx, 1)
+}
+
+function onLogoChange(file: UploadFile) {
+  if (file.raw) store.logoFile = file.raw
+}
+
+function onLogoRemove() {
+  store.logoFile = null
+  store.params.logo_file = null
 }
 </script>
 

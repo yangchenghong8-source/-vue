@@ -23,7 +23,7 @@ DEFAULT_BGM_VOLUME = 0.5
 # 字幕描边宽度。字幕按 1080x1920 烧录，但前端预览把竖屏视频缩到约 270px 宽，
 # 1.5px 描边在该尺寸下不足 0.4px（亚像素，等于没有描边），白字压在照片上糊成
 # 一团。4px 缩放后仍有约 1px 的有效轮廓。
-DEFAULT_SUBTITLE_STROKE_WIDTH = 4.0
+DEFAULT_SUBTITLE_STROKE_WIDTH = 2.0
 
 # 默认音色。此前三处默认值不一致：VideoParams 是空串，SubtitleRequest 与
 # AudioRequest 是晓晓（女声），而 config.toml 的 [ui] 里存的是澳洲英语女声
@@ -86,7 +86,7 @@ class VideoParams(BaseModel):
       "text_color": "#FFFFFF",
       "font_size": 60,
       "stroke_color": "#000000",
-      "stroke_width": 4
+      "stroke_width": 2
     }
     """
 
@@ -125,6 +125,9 @@ class VideoParams(BaseModel):
     selected_category: Optional[str] = None  # 选中的 KB 素材分类（full 路径，逗号分隔多前缀）
 
     custom_audio_file: Optional[str] = None  # Custom audio file path, will ignore TTS and can still use Whisper subtitles
+    logo_enabled: bool = False
+    # 上传的 Logo 位于 storage/logos/{user_id}。视频合成阶段会将它固定叠加在右上角。
+    logo_file: Optional[str] = None
     video_language: Optional[str] = ""  # auto detect
 
     voice_name: Optional[str] = DEFAULT_VOICE_NAME

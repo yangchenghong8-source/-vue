@@ -212,6 +212,44 @@ def is_presentable(task: dict[str, Any]) -> bool:
     return task.get("state") is not None
 
 
+def sync_runtime_task_artifacts(task: dict[str, Any]) -> dict[str, Any] | None:
+    """以服务器任务目录和最终成片校正运行时任务。
+
+    任务完成后，内存/Redis 会继续保留 ``videos`` 路径直到服务重启。如果运维人员
+    在服务器上直接清理了 ``final-*.mp4``，旧路径会被再次合并进任务列表，前端因而
+    仍显示一个实际上无法播放或下载的“已完成”任务。
+
+    同时，手动删除整个任务目录后，失败、暂停和处理中任务也不能继续只靠内存/Redis
+    显示在前端。目录不存在时一律返回 ``None``；已完成任务则额外校验最终成片，仍有
+    成片时使用扫描到的真实路径。
+    """
+    task_id = task.get("task_id")
+    if not isinstance(task_id, str) or not task_id:
+        return task
+
+    if not task_exists(task_id):
+        logger.debug(f"hide runtime task with deleted directory: task_id={task_id}")
+        return None
+
+    if task.get("state") != const.TASK_STATE_COMPLETE:
+        return task
+
+    final_video = find_final_video(task_path(task_id))
+    if not final_video:
+        logger.debug(f"hide completed task with deleted artifacts: task_id={task_id}")
+        return None
+
+    synced = dict(task)
+    # 历史接口只承诺返回最终成片；避免 runtime 中残留的已删除路径排在有效文件之前。
+    synced["videos"] = [final_video]
+    synced.pop("combined_videos", None)
+    return synced
+
+
+# Backward-compatible name used by callers that only need completed-task handling.
+sync_completed_task_artifacts = sync_runtime_task_artifacts
+
+
 def scan_tasks(user_id: Any = None, is_admin: bool = False, limit: int = 200) -> list[dict[str, Any]]:
     """扫描任务目录，返回该用户可见的历史任务，按修改时间倒序。"""
     tasks_root = utils.task_dir()
@@ -257,6 +295,12 @@ def merge_runtime(
     for runtime_task in runtime_tasks:
         task_id = runtime_task.get("task_id")
         if not task_id:
+            continue
+        runtime_task = sync_runtime_task_artifacts(runtime_task)
+        if runtime_task is None:
+            # 磁盘扫描也不会把没有 final-* 的任务作为完成历史返回。移除可能由
+            # 运行时缓存留下的旧记录，确保前端下一次轮询立即与服务器文件同步。
+            merged.pop(task_id, None)
             continue
         base_task = merged.get(task_id, {})
         combined = {**base_task, **runtime_task, "source": "runtime"}

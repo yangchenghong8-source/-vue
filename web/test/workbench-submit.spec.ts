@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { createVideo } from '@/api/tasks'
+import { uploadLogo } from '@/api/helper'
 import { useWorkbenchStore } from '@/stores/workbench'
 
 vi.mock('element-plus', () => ({
@@ -17,6 +18,7 @@ vi.mock('@/api/helper', () => ({
   getLlmProviders: vi.fn(),
   getVoices: vi.fn(),
   uploadCustomAudio: vi.fn(),
+  uploadLogo: vi.fn(),
 }))
 vi.mock('@/api/llm', () => ({
   generateScript: vi.fn(),
@@ -24,6 +26,7 @@ vi.mock('@/api/llm', () => ({
 }))
 
 const createVideoMock = vi.mocked(createVideo)
+const uploadLogoMock = vi.mocked(uploadLogo)
 
 function makeDeferred<T>() {
   let resolve!: (v: T) => void
@@ -54,6 +57,7 @@ describe('submitGeneration 防重复（BUG-3）', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     createVideoMock.mockReset()
+    uploadLogoMock.mockReset()
   })
 
   it('单次点击只产生 1 个任务', async () => {
@@ -97,5 +101,50 @@ describe('submitGeneration 防重复（BUG-3）', () => {
     await store.submitGeneration()
     expect(createVideoMock).not.toHaveBeenCalled()
     expect(store.generating).toBe(false)
+  })
+
+  it('知识库模式未选择目录时不提交任务', async () => {
+    const store = setupStore()
+    store.params.video_source = 'knowledge_base'
+    store.params.kb_category = ''
+
+    await store.submitGeneration()
+
+    expect(createVideoMock).not.toHaveBeenCalled()
+    expect(store.generating).toBe(false)
+  })
+
+  it('知识库模式选择具体目录后允许提交任务', async () => {
+    const store = setupStore()
+    store.params.video_source = 'knowledge_base'
+    store.params.kb_category = '科尔顿-医用-血液透析-AI机器人系列'
+    createVideoMock.mockResolvedValue({ task_id: 'kb-1' })
+
+    await store.submitGeneration()
+
+    expect(createVideoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        video_source: 'knowledge_base',
+        kb_category: '科尔顿-医用-血液透析-AI机器人系列',
+      }),
+    )
+  })
+
+  it('启用 Logo 时会先上传图片，再将返回路径提交给视频任务', async () => {
+    const store = setupStore()
+    store.params.logo_enabled = true
+    store.logoFile = new File(['logo'], 'brand.png', { type: 'image/png' })
+    uploadLogoMock.mockResolvedValue({ file: 'storage/logos/1/brand.png' })
+    createVideoMock.mockResolvedValue({ task_id: 't-logo' })
+
+    await store.submitGeneration()
+
+    expect(uploadLogoMock).toHaveBeenCalledWith(store.logoFile)
+    expect(createVideoMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        logo_enabled: true,
+        logo_file: 'storage/logos/1/brand.png',
+      }),
+    )
   })
 })

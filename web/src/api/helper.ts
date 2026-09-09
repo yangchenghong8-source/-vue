@@ -92,3 +92,17 @@ export function testLlmConnection(): Promise<{ success: boolean; message: string
 export function uploadCustomAudio(file: File): Promise<{ file: string }> {
   return apiUpload<{ file: string }>('/api/v1/custom-audio', file)
 }
+
+// ── 视频右上角 Logo ──────────────────────────────────────────────────
+export function uploadLogo(file: File): Promise<{ file: string }> {
+  return apiUpload<{ file: string }>('/api/v1/logos', file)
+}
+
+export interface LibraryLogo {
+  name: string
+  file: string
+}
+
+export function getLibraryLogos(): Promise<LibraryLogo[]> {
+  return apiGet<{ logos: LibraryLogo[] }>('/api/v1/logos/library').then((r) => r.logos)
+}

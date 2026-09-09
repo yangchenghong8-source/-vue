@@ -14,6 +14,11 @@
         </el-select>
       </el-form-item>
 
+      <div class="subtitle-preview" :style="previewBoxStyle">
+        <div class="preview-caption">实时字幕预览 · {{ store.params.font_size }} px</div>
+        <div :style="previewTextStyle">让素材与文案准确匹配</div>
+      </div>
+
       <el-form-item label="字号">
         <el-input-number
           v-model="store.params.font_size"
@@ -82,7 +87,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useWorkbenchStore } from '@/stores/workbench'
 
 const store = useWorkbenchStore()
@@ -90,6 +95,38 @@ const store = useWorkbenchStore()
 const backgroundEnabled = ref(false)
 const bgColor = ref('#1e1e1e')
 const rounded = ref(false)
+
+const previewBoxStyle = computed(() => ({
+  background: backgroundEnabled.value ? bgColor.value : '#303133',
+  borderRadius: rounded.value ? '12px' : '4px',
+}))
+
+const previewTextStyle = computed(() => ({
+  color: store.params.text_fore_color,
+  fontFamily: `"${store.params.font_name}", "Microsoft YaHei", sans-serif`,
+  fontSize: `${Math.min(Math.max(store.params.font_size, 20), 88)}px`,
+  WebkitTextStroke: `${store.params.stroke_width}px ${store.params.stroke_color}`,
+  lineHeight: 1.25,
+}))
+
+const loadedPreviewFonts = new Set<string>()
+
+async function loadPreviewFont(fontName: string) {
+  if (!fontName || loadedPreviewFonts.has(fontName)) return
+  try {
+    const fontFace = new FontFace(
+      fontName,
+      `url(/api/v1/font-preview/${encodeURIComponent(fontName)})`,
+    )
+    await fontFace.load()
+    document.fonts.add(fontFace)
+    loadedPreviewFonts.add(fontName)
+  } catch {
+    // A fallback font still keeps every other preview setting interactive.
+  }
+}
+
+watch(() => store.params.font_name, loadPreviewFont, { immediate: true })
 
 // 与 WebUI _render_subtitle_settings 对齐：
 // text_background_color = 选中颜色（开启时）否则 False；rounded_subtitle_background 同理
@@ -127,5 +164,18 @@ watch(
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+.subtitle-preview {
+  min-height: 130px;
+  margin: 0 0 18px;
+  padding: 16px;
+  overflow: hidden;
+  text-align: center;
+  transition: background-color 0.15s ease, border-radius 0.15s ease;
+}
+.preview-caption {
+  margin-bottom: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
 }
 </style>

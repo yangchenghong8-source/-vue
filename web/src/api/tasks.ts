@@ -16,7 +16,7 @@ export interface TaskItem {
   request_id?: string
   state: number
   progress: number
-  params?: Record<string, unknown>
+  params?: Record<string, unknown> | string
   user_id?: string | number
   videos?: string[]
   combined_videos?: string[]
@@ -33,6 +33,35 @@ export interface TaskListData {
   total: number
   page: number
   page_size: number
+}
+
+export interface MaterialMatchCandidate {
+  query: string
+  name: string
+  score: number
+  category: string
+  overlap_terms: string[]
+  reason?: string
+}
+
+export interface MaterialMatchShot {
+  shot: number
+  text: string
+  queries: string[]
+  accepted: MaterialMatchCandidate | null
+  rejections: MaterialMatchCandidate[]
+}
+
+export interface MaterialMatchReport {
+  threshold: number
+  allow_material_reuse: boolean
+  require_keyword_overlap: boolean
+  kb_category: string
+  matched: number
+  total: number
+  unmatched: number
+  materials: Array<string | null>
+  shots: MaterialMatchShot[]
 }
 
 // ── 生成请求体（与后端 VideoParams schema 对应）──
@@ -56,6 +85,8 @@ export interface TaskVideoRequest {
   material_driven_mode?: boolean
   selected_category?: string | null
   custom_audio_file?: string | null
+  logo_enabled?: boolean
+  logo_file?: string | null
   video_language?: string | null
   voice_name?: string | null
   voice_volume?: number | null
@@ -124,6 +155,10 @@ export async function getTasks(page: number, pageSize: number): Promise<TaskList
 
 export async function getTask(taskId: string): Promise<TaskItem> {
   return apiGet<TaskItem>(`/api/v1/tasks/${taskId}`)
+}
+
+export async function getMaterialMatchReport(taskId: string): Promise<MaterialMatchReport> {
+  return apiGet<MaterialMatchReport>(`/api/v1/videos/${taskId}/material-match`)
 }
 
 export async function deleteTask(taskId: string): Promise<unknown> {

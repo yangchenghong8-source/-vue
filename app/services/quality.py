@@ -19,8 +19,70 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from loguru import logger
+import jieba
 
 from app.utils import utils
+
+
+# These words describe a generic production scene or generic equipment.  They
+# are not sufficient evidence that a material represents the business entity in
+# the narration (for example, "处理" must not make a dialysis shot pass with a
+# drinking-water purifier image).
+_ENTITY_STOPWORDS = {
+    "处理", "设备", "系统", "机房", "医院", "场所", "运行", "安全", "健康",
+    "饮用", "工作", "办公", "室内", "室外", "管理", "状态", "数据", "现场",
+    "画面", "展示", "正在", "进行", "视频", "图片", "素材", "产品", "系列",
+}
+
+
+def _business_entity_terms(text: str) -> set[str]:
+    """Extract non-generic business terms used to validate a material match."""
+    return {
+        token.strip().lower()
+        for token in jieba.lcut(str(text or ""))
+        if len(token.strip()) >= 2
+        and token.strip().lower() not in _ENTITY_STOPWORDS
+        and not token.strip().isdigit()
+    }
+
+
+def _material_entity_mismatches(match_data: dict[str, Any]) -> list[int]:
+    """Return storyboard shot numbers whose accepted item lacks a business entity.
+
+    ``material_match.json`` already proves that a candidate passed semantic and
+    keyword gates.  This second check is intentionally stricter: it compares
+    the business entities in the shot's text/queries with the selected item's
+    filename and category, so a lone generic overlap cannot produce a perfect
+    quality score.
+    """
+    mismatches: list[int] = []
+    shots = match_data.get("shots", [])
+    if not isinstance(shots, list):
+        return mismatches
+
+    for fallback_index, shot in enumerate(shots, 1):
+        if not isinstance(shot, dict):
+            continue
+        accepted = shot.get("accepted")
+        if not isinstance(accepted, dict):
+            continue
+        query_text = " ".join(
+            [str(shot.get("text", "") or "")]
+            + [str(query or "") for query in shot.get("queries", [])]
+        )
+        material_text = " ".join(
+            str(accepted.get(key, "") or "") for key in ("name", "category")
+        )
+        shot_terms = _business_entity_terms(query_text)
+        material_terms = _business_entity_terms(material_text)
+        # Empty evidence means the shot cannot be assessed safely; leave it to
+        # the existing semantic/keyword checks instead of fabricating a fail.
+        if shot_terms and material_terms and not (shot_terms & material_terms):
+            try:
+                mismatches.append(int(shot.get("shot", fallback_index)))
+            except (TypeError, ValueError):
+                mismatches.append(fallback_index)
+    return mismatches
 
 
 @dataclass
@@ -214,6 +276,58 @@ def score_video(task_id: str, video_path: str, expected_duration: float = 0) -> 
     else:
         # Subtitle might be legitimately disabled; mark as warning not failure
         checks["subtitle"] = {"passed": True, "detail": "Subtitle not present or empty (may be intentional)"}
+
+    # Content matching is separate from technical validity. A playable video
+    # can still contain the wrong footage for one or more narration shots.
+    match_path = os.path.join(utils.task_dir(task_id), "material_match.json")
+    if os.path.exists(match_path):
+        try:
+            with open(match_path, "r", encoding="utf-8") as fp:
+                match_data = json.load(fp)
+            unmatched = int(match_data.get("unmatched", 0) or 0)
+            total = int(match_data.get("total", 0) or 0)
+            if unmatched:
+                penalty = min(35, round(35 * unmatched / max(total, 1)))
+                score -= penalty
+                anomalies.append(
+                    f"{unmatched}/{total} storyboard shots have no accepted material match"
+                )
+                checks["material_match"] = {
+                    "passed": False,
+                    "detail": f"{unmatched} unmatched shots; penalty {penalty}",
+                }
+            else:
+                checks["material_match"] = {
+                    "passed": True,
+                    "detail": f"All {total} storyboard shots have accepted matches",
+                }
+
+            entity_mismatches = _material_entity_mismatches(match_data)
+            if entity_mismatches:
+                penalty = min(35, round(35 * len(entity_mismatches) / max(total, 1)))
+                score -= penalty
+                anomalies.append(
+                    "Business entity mismatch in storyboard shots: "
+                    + ", ".join(map(str, entity_mismatches))
+                )
+                checks["material_entity"] = {
+                    "passed": False,
+                    "detail": (
+                        f"{len(entity_mismatches)}/{max(total, 1)} accepted matches lack "
+                        f"a shared business entity; penalty {penalty}"
+                    ),
+                }
+            elif match_data.get("shots"):
+                checks["material_entity"] = {
+                    "passed": True,
+                    "detail": "Accepted materials share a business entity with each assessed shot",
+                }
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            checks["material_match"] = {
+                "passed": False,
+                "detail": f"Unable to read material match report: {exc}",
+            }
+            anomalies.append("Material match report could not be verified")
 
     # Normalize score
     report.score = max(0, min(100, score))
