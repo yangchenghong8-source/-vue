@@ -20,6 +20,10 @@ COMPOSE_PROJECT="yang"
 KB_RUN_SH="/home/ta/kb-app/run.sh"
 WEB_DIR="/home/ta/yang/web"
 WEB_PORT="8501"
+API_PORT="8088"
+KB_PORT="3001"
+PUBLIC_HOST="${PUBLIC_HOST:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
+[ -n "$PUBLIC_HOST" ] || PUBLIC_HOST="127.0.0.1"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()  { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -68,20 +72,20 @@ docker compose -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT" down 2>/dev/null \
 
 # ---- 2. 启动后端 MySQL + API ----
 echo "==> [2/5] 启动后端 MySQL + API（代码=yang，数据卷=yang_mysql_data）..."
-docker compose -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT" up -d $BUILD_FLAG mysql api
+docker compose -f "$COMPOSE_FILE" -p "$COMPOSE_PROJECT" up -d --force-recreate $BUILD_FLAG mysql api
 log "compose up 已提交，等待就绪..."
 
 wait_healthy "mpt-mysql" "MySQL" 40 2 || exit 1
-wait_http "http://127.0.0.1:8088/docs" "yang-API" 40 2 \
+wait_http "http://127.0.0.1:$API_PORT/docs" "yang-API" 40 2 \
   || { fail "API 启动失败，查看日志: docker logs moneyprinterturbo-api"; exit 1; }
 
 # ---- 3. 启动 kb-app 知识库 ----
 echo "==> [3/5] 启动 kb-app（知识库，端口 3001）..."
-if curl -sf -o /dev/null "http://127.0.0.1:3001/docs" 2>/dev/null; then
+if curl -sf -o /dev/null "http://127.0.0.1:$KB_PORT/docs" 2>/dev/null; then
   warn "kb-app 已在运行，跳过"
 else
   ( nohup bash "$KB_RUN_SH" > /tmp/kb-app.log 2>&1 & )
-  wait_http "http://127.0.0.1:3001/docs" "kb-app" 30 2 \
+  wait_http "http://127.0.0.1:$KB_PORT/docs" "kb-app" 30 2 \
     || { fail "kb-app 启动失败，查看日志: tail -f /tmp/kb-app.log"; exit 1; }
 fi
 
@@ -121,10 +125,10 @@ if [ "$mt_st" = "healthy" ]; then
 else
   printf "  ${RED}%-9s${NC} %s\n" "[DOWN]" "MySQL"
 fi
-curl -sf -o /dev/null http://127.0.0.1:8088/docs 2>/dev/null \
+curl -sf -o /dev/null "http://127.0.0.1:$API_PORT/docs" 2>/dev/null \
   && printf "  ${GREEN}%-9s${NC} %s\n" "[RUNNING]" "API      (8088 -> /api/v1)" \
   || printf "  ${RED}%-9s${NC} %s\n" "[DOWN]" "API"
-curl -sf -o /dev/null http://127.0.0.1:3001/docs 2>/dev/null \
+curl -sf -o /dev/null "http://127.0.0.1:$KB_PORT/docs" 2>/dev/null \
   && printf "  ${GREEN}%-9s${NC} %s\n" "[RUNNING]" "kb-app   (3001 知识库)" \
   || printf "  ${RED}%-9s${NC} %s\n" "[DOWN]" "kb-app"
 redis-cli ping >/dev/null 2>&1 \
@@ -134,8 +138,11 @@ curl -sf -o /dev/null "http://127.0.0.1:$WEB_PORT" 2>/dev/null \
   && printf "  ${GREEN}%-9s${NC} %s\n" "[RUNNING]" "前端      ($WEB_PORT Vue/Vite)" \
   || printf "  ${RED}%-9s${NC} %s\n" "[DOWN]" "前端"
 echo "============================================"
-echo "  前端:     http://127.0.0.1:$WEB_PORT"
-echo "  API 文档: http://127.0.0.1:8088/docs"
+echo "  前端（局域网）:     http://$PUBLIC_HOST:$WEB_PORT"
+echo "  API 文档（局域网）: http://$PUBLIC_HOST:$API_PORT/docs"
+echo "  知识库（局域网）:   http://$PUBLIC_HOST:$KB_PORT/docs"
+echo "  本机前端:           http://127.0.0.1:$WEB_PORT"
+echo "  本机 API 文档:      http://127.0.0.1:$API_PORT/docs"
 echo "  前端日志: tail -f /tmp/mpt-web.log"
 echo "  kb-app 日志: tail -f /tmp/kb-app.log"
 echo "============================================"
