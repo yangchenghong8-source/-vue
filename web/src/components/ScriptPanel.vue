@@ -37,12 +37,12 @@
             <div class="tip">0 = 不限制；非 0 时按约 4.2 字/秒换算目标字数</div>
           </el-form-item>
 
-          <el-form-item label="自定义文案要求">
+          <el-form-item label="脚本风格/结构/口吻">
             <el-input
               v-model="store.params.video_script_prompt"
               type="textarea"
               :rows="3"
-              placeholder="对脚本风格、结构、口吻的额外要求"
+              placeholder="示例：清新风；三段式结构；严肃口吻。也可填写节奏、受众等要求"
             />
           </el-form-item>
 

@@ -31,6 +31,8 @@
               :value="o.value"
             />
           </el-select>
+        <el-button type="primary" link :loading="previewLoading" :disabled="!store.params.voice_name" @click="previewVoice(store.params.voice_name)">试听当前音色</el-button>
+        <audio v-if="previewUrl" :src="previewUrl" controls autoplay class="voice-preview" />
         </el-form-item>
       </template>
 
@@ -85,10 +87,30 @@
 </template>
 
 <script setup lang="ts">
+import { ref } from "vue"
+import { ElMessage } from "element-plus"
+import { previewVoice as requestVoicePreview } from "@/api/helper"
 import type { UploadFile } from 'element-plus'
 import { useWorkbenchStore, TTS_SERVERS } from '@/stores/workbench'
 
 const store = useWorkbenchStore()
+const previewUrl = ref("")
+const previewLoading = ref(false)
+
+async function previewVoice(voiceName: string) {
+  if (previewLoading.value) return
+  previewLoading.value = true
+  try {
+    const text = voiceName.toLowerCase().startsWith("en-") ? "Hello, this is a preview of the selected voice." : "你好，这是当前音色的试听。"
+    const blob = await requestVoicePreview({ voice_name: voiceName, text, voice_rate: store.params.voice_rate, voice_volume: store.params.voice_volume })
+    if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+    previewUrl.value = URL.createObjectURL(blob)
+  } catch {
+    ElMessage.error("试听生成失败，请检查对应 TTS 配置")
+  } finally {
+    previewLoading.value = false
+  }
+}
 
 function onAudioChange(file: UploadFile) {
   if (file.raw) store.customAudioFile = file.raw
@@ -108,6 +130,7 @@ function onBgmRemove() {
 </script>
 
 <style scoped>
+.voice-preview { width: 100%; margin: 8px 0 12px; }
 .panel-header {
   font-weight: 600;
 }

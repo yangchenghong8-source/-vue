@@ -266,6 +266,50 @@ def test_merge_runtime_keeps_runtime_only_tasks():
     assert [t["task_id"] for t in merged] == ["fresh"]
 
 
+def test_merge_runtime_hides_completed_task_when_final_file_was_deleted(tasks_root):
+    """手工删除成片后，运行时缓存不能让任务继续出现在历史列表。"""
+    _make_task(tasks_root, "deleted", owner="42")
+    runtime = [
+        {
+            "task_id": "deleted",
+            "state": const.TASK_STATE_COMPLETE,
+            "progress": 100,
+            "videos": ["/stale/deleted/final-1.mp4"],
+        }
+    ]
+
+    assert task_history.merge_runtime([], runtime) == []
+
+
+def test_merge_runtime_hides_failed_task_when_task_directory_was_deleted(tasks_root):
+    """没有任务目录的失败缓存也不应继续出现在前端历史中。"""
+    runtime = [
+        {
+            "task_id": "deleted-failed",
+            "state": const.TASK_STATE_FAILED,
+            "progress": 30,
+        }
+    ]
+
+    assert task_history.merge_runtime([], runtime) == []
+
+
+def test_merge_runtime_replaces_stale_runtime_path_with_existing_final(tasks_root):
+    task_dir = _make_task(tasks_root, "kept", files=("final-1.mp4",), owner="42")
+    runtime = [
+        {
+            "task_id": "kept",
+            "state": const.TASK_STATE_COMPLETE,
+            "progress": 100,
+            "videos": ["/stale/kept/final-1.mp4"],
+        }
+    ]
+
+    merged = task_history.merge_runtime([], runtime)
+
+    assert merged[0]["videos"] == [str(task_dir / "final-1.mp4")]
+
+
 def test_merge_runtime_sorted_by_mtime_desc():
     disk = [
         {"task_id": "a", "state": const.TASK_STATE_COMPLETE, "mtime": 1},

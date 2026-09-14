@@ -8,7 +8,7 @@ export function subjectOf(task: TaskItem): string {
   }
   // 兜底：从 params.video_subject 取（历史任务 params 可能是正常对象）
   const p = task.params
-  const ps = p?.video_subject
+  const ps = p && typeof p === 'object' ? p.video_subject : undefined
   if (typeof ps === 'string' && ps.trim()) {
     return ps
   }

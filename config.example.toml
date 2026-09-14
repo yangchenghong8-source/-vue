@@ -62,7 +62,9 @@ twelvelabs_rerank_terms = false
 
 # Match search terms and downloaded materials to the script narrative order.
 # 默认关闭，开启后会减少随机性，使素材顺序更贴近文案结构。
-match_materials_to_script = false
+match_materials_to_script = true
+material_match_min_score = 0.45
+allow_material_reuse = false
 
 # Optional Sonilo video-matched original background music.
 # Create a key at https://platform.sonilo.com/dashboard. The WebUI can also save

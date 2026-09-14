@@ -190,6 +190,33 @@ def _public_task_data(task: dict) -> dict:
     return public_task
 
 
+def _validate_task_logo(
+    body: Union[TaskVideoRequest, SubtitleRequest, AudioRequest], user: User
+) -> None:
+    """确保任务只能使用当前用户上传的 Logo。"""
+    if not getattr(body, "logo_enabled", False):
+        return
+    logo_file = getattr(body, "logo_file", None)
+    if not logo_file:
+        raise ValueError("a logo must be selected when logo watermark is enabled")
+    normalized = str(logo_file).replace("\\", "/").lstrip("/")
+    if normalized.startswith("logo/"):
+        relative_path = normalized[len("logo/") :]
+        if not relative_path or "/" in relative_path:
+            raise ValueError("invalid library logo path")
+        file_security.resolve_path_within_directory(
+            os.path.join(utils.root_dir(), "logo"), relative_path
+        )
+        return
+    expected_prefix = f"storage/logos/{user.id}/"
+    if not normalized.startswith(expected_prefix):
+        raise ValueError("logo does not belong to the current user")
+    relative_path = normalized[len("storage/logos/") :]
+    file_security.resolve_path_within_directory(
+        utils.storage_dir("logos", create=True), relative_path
+    )
+
+
 def _task_file_to_uri(file: str, endpoint: str, task_dir: str, request_id: str) -> str:
     if not isinstance(file, str):
         return file
@@ -310,8 +337,17 @@ def create_task(
             status_code=400,
             message=f"{request_id}: video_subject must not be empty",
         )
-
+    if isinstance(body, TaskVideoRequest) and body.video_source in {"knowledge_base", "jimeng"}:
+        kb_category = (body.kb_category or "").strip()
+        if not kb_category:
+            raise HttpException(
+                task_id=task_id,
+                status_code=400,
+                message=f"{request_id}: choose a knowledge-base material directory or coverage level",
+            )
     try:
+        if current_user is not None:
+            _validate_task_logo(body, current_user)
         task = {
             "task_id": task_id,
             "request_id": request_id,
@@ -404,6 +440,10 @@ def get_task(
     task = sm.state.get_task(task_id)
     if task and not _task_belongs_to(task, current_user):
         task = None
+    if task:
+        # 内存状态可能在服务器任务目录或成片被手工清理后继续存在；以磁盘为准，
+        # 避免单任务查询继续返回已删除任务或无法播放/下载的旧链接。
+        task = task_history.sync_runtime_task_artifacts(task)
     if task is None:
         # 运行时状态查不到时回落磁盘，让历史任务在重启后仍可查询、仍能拿到播放地址。
         disk_task = task_history.load_disk_task(task_id)
@@ -770,6 +810,33 @@ def get_quality_report(
         raise HttpException(
             task_id=task_id, status_code=500,
             message=f"Failed to read quality report: {_e}",
+        )
+    return utils.get_response(200, report)
+
+
+@router.get("/videos/{task_id}/material-match", summary="Get storyboard material match report")
+def get_material_match_report(
+    task_id: str = Path(..., description="Task ID"),
+    current_user: User = Depends(_get_current_user),
+):
+    """Return the per-shot knowledge-base material matching decisions."""
+    _require_owned_task(task_id, current_user)
+    import json as _json
+    report_path = os.path.join(utils.task_dir(task_id), "material_match.json")
+    if not os.path.exists(report_path):
+        raise HttpException(
+            task_id=task_id,
+            status_code=404,
+            message="Material match report not found. This task may not use storyboard knowledge-base matching.",
+        )
+    try:
+        with open(report_path, "r", encoding="utf-8") as report_file:
+            report = _json.load(report_file)
+    except (OSError, ValueError, TypeError) as exc:
+        raise HttpException(
+            task_id=task_id,
+            status_code=500,
+            message=f"Failed to read material match report: {exc}",
         )
     return utils.get_response(200, report)
 

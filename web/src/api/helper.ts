@@ -1,4 +1,4 @@
-import { apiDelete, apiGet, apiPost, apiPut, apiUpload } from './client'
+import client, { apiDelete, apiGet, apiPost, apiPut, apiUpload } from './client'
 import type {
   CacheStats,
   ConfigSections,
@@ -12,6 +12,10 @@ import type {
 
 export function getVoices(): Promise<VoiceMap> {
   return apiGet<VoiceMap>('/api/v1/voices')
+}
+
+export function previewVoice(body: { voice_name: string; text: string; voice_rate?: number; voice_volume?: number }): Promise<Blob> {
+  return client.post("/api/v1/voice-preview", body, { responseType: "blob" }).then((r) => r.data)
 }
 
 export function getFonts(): Promise<string[]> {
@@ -91,4 +95,18 @@ export function testLlmConnection(): Promise<{ success: boolean; message: string
 // custom_audio_file 字段引用（resolve_custom_audio_file 会在 root_dir 下解析）。
 export function uploadCustomAudio(file: File): Promise<{ file: string }> {
   return apiUpload<{ file: string }>('/api/v1/custom-audio', file)
+}
+
+// ── 视频右上角 Logo ──────────────────────────────────────────────────
+export function uploadLogo(file: File): Promise<{ file: string }> {
+  return apiUpload<{ file: string }>('/api/v1/logos', file)
+}
+
+export interface LibraryLogo {
+  name: string
+  file: string
+}
+
+export function getLibraryLogos(): Promise<LibraryLogo[]> {
+  return apiGet<{ logos: LibraryLogo[] }>('/api/v1/logos/library').then((r) => r.logos)
 }
