@@ -3,12 +3,12 @@
     <template #header>
       <div class="panel-header">
         <span>字幕</span>
-        <el-switch v-model="store.params.subtitle_enabled" />
+        <span id="guide-subtitle-switch"><el-switch v-model="store.params.subtitle_enabled" /></span>
       </div>
     </template>
 
     <el-form label-position="top" size="default" :disabled="!store.params.subtitle_enabled">
-      <el-form-item label="字体">
+      <el-form-item id="guide-font" label="字体">
         <el-select v-model="store.params.font_name" style="width: 100%" filterable>
           <el-option v-for="f in store.fonts" :key="f" :label="f" :value="f" />
         </el-select>

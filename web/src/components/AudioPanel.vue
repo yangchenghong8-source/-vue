@@ -7,7 +7,7 @@
     </template>
 
     <el-form label-position="top" size="default">
-      <el-form-item label="配音模式">
+      <el-form-item id="guide-voice-mode" label="配音模式">
         <el-radio-group v-model="store.voiceMode">
           <el-radio-button value="tts">AI 配音</el-radio-button>
           <el-radio-button value="upload">上传配音</el-radio-button>
@@ -22,7 +22,7 @@
           </el-select>
         </el-form-item>
 
-        <el-form-item label="音色">
+        <el-form-item id="guide-voice-name" label="音色">
           <el-select v-model="store.params.voice_name" style="width: 100%">
             <el-option
               v-for="o in store.voiceOptions"
@@ -57,7 +57,7 @@
 
       <el-divider content-position="left">背景音乐</el-divider>
 
-      <el-form-item label="背景音乐类型">
+      <el-form-item id="guide-bgm" label="背景音乐类型">
         <el-radio-group v-model="store.params.bgm_type">
           <el-radio-button value="random">随机</el-radio-button>
           <el-radio-button value="none">无</el-radio-button>
