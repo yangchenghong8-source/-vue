@@ -76,7 +76,7 @@ const DEFAULT_PARAMS: WorkbenchParams = {
   video_clip_speed: 1.0,
   match_materials_to_script: true,
   video_count: 1,
-  video_source: 'pexels',
+  video_source: 'knowledge_base',
   video_materials: null,
   use_knowledge: false,
   kb_doc_filenames: null,
@@ -257,7 +257,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       params.voice_name = recommendedVoice.value
     }
 
-    params.video_source = (app.video_source as string) || params.video_source
+    params.video_source = 'knowledge_base'
     params.match_materials_to_script =
       (app.match_materials_to_script as boolean) ?? params.match_materials_to_script
   }
