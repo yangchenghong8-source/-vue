@@ -1,6 +1,7 @@
 <template>
   <div class="generation-bar">
     <el-button
+      id="guide-generate-button"
       type="primary"
       size="large"
       :loading="store.generating"

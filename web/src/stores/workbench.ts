@@ -177,7 +177,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
   // 当前 TTS 服务对应的音色列表
   const currentVoices = computed<string[]>(() => {
     if (!voices.value) return []
-    const azure = voices.value.azure ?? []
+    const azure = (voices.value.azure ?? []).filter((voice) => /^(zh|en)-/i.test(voice))
     if (ttsServer.value === 'azure-tts-v2') return azure.filter((v) => v.includes('V2'))
     if (ttsServer.value === 'azure-tts-v1') return azure.filter((v) => !v.includes('V2'))
     return []

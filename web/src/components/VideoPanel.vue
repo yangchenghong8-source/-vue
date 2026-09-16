@@ -21,26 +21,6 @@
         </el-form-item>
       </div>
 
-      <el-form-item label="素材来源">
-        <el-select v-model="store.params.video_source" style="width: 100%">
-          <el-option v-for="s in VIDEO_SOURCES" :key="s.value" :label="s.label" :value="s.value" />
-        </el-select>
-      </el-form-item>
-
-      <el-form-item v-if="isKbSource" label="知识库素材目录" required>
-        <el-cascader
-          v-model="kbCategoryPath"
-          :options="cascaderOptions"
-          :props="{ checkStrictly: true }"
-          clearable
-          filterable
-          style="width: 100%"
-          placeholder="选择末级目录或上级覆盖范围"
-          @change="onKbCategoryChange"
-        />
-        <div v-if="kbTreeEmpty" class="tip">知识库暂无可用目录，请先上传并完成素材分类</div>
-        <div v-else class="tip">选择末级目录时仅检索该目录；选择上级目录时会覆盖其下级目录。</div>
-      </el-form-item>
 
       <el-form-item v-if="store.params.video_source === 'local'" label="本地素材">
         <el-upload
@@ -80,13 +60,6 @@
         </el-form-item>
       </div>
 
-      <el-form-item>
-        <el-switch v-model="store.params.match_materials_to_script" active-text="素材匹配脚本" />
-        <div v-if="isKbSource" class="tip match-tip">
-          开启后按每个分镜的视觉描述、实体和场景，在所选目录中匹配素材；无可靠命中时会标记为未命中，不会用无关素材替代。
-        </div>
-      </el-form-item>
-
       <el-divider content-position="left">右上角 Logo</el-divider>
       <el-form-item>
         <el-switch v-model="store.params.logo_enabled" active-text="添加右上角 Logo" />
@@ -122,12 +95,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { UploadFile, UploadUserFile } from 'element-plus'
-import { useWorkbenchStore, VIDEO_SOURCES } from '@/stores/workbench'
-import { getKbMediaCategories, getLibraryLogos } from '@/api/helper'
-import type { LibraryLogo } from '@/api/helper'
-import type { KbCategory } from '@/api/types'
+import { useWorkbenchStore } from '@/stores/workbench'
+import { getLibraryLogos } from '@/api/helper'
+import type { LibraryLogo } from '@/api/helper'
 
 const store = useWorkbenchStore()
 const libraryLogos = ref<LibraryLogo[]>([])
@@ -152,69 +124,6 @@ const ASPECTS = [
   { value: '1:1', label: '方形 1:1' },
 ]
 
-interface CascaderOption {
-  value: string
-  label: string
-  children?: CascaderOption[]
-}
-
-// 知识库层级（分类级联），仅 knowledge_base / jimeng 来源显示
-const kbTree = ref<KbCategory[]>([])
-const kbCategoryPath = ref<string[]>([])
-
-const isKbSource = computed(
-  () => store.params.video_source === 'knowledge_base' || store.params.video_source === 'jimeng',
-)
-const kbTreeEmpty = computed(() => kbTree.value.length === 0)
-
-function toCascaderOptions(nodes: KbCategory[]): CascaderOption[] {
-  return nodes.map((n) => {
-    const full = n.full || n.name || ''
-    return {
-      value: full,
-      label: `${n.name || full}（${n.count ?? 0} 个素材）`,
-      children: n.children?.length ? toCascaderOptions(n.children) : undefined,
-    }
-  })
-}
-
-const cascaderOptions = computed<CascaderOption[]>(() => toCascaderOptions(kbTree.value))
-
-function findNodeByFull(nodes: KbCategory[], full: string): KbCategory | null {
-  for (const node of nodes) {
-    if ((node.full || node.name) === full) return node
-    const hit = node.children?.length ? findNodeByFull(node.children, full) : null
-    if (hit) return hit
-  }
-  return null
-}
-
-async function loadKbTree() {
-  if (!isKbSource.value) {
-    kbTree.value = []
-    kbCategoryPath.value = []
-    store.params.kb_category = ''
-    return
-  }
-  const fileType = store.params.video_source === 'jimeng' ? 'image' : 'all'
-  try {
-    kbTree.value = await getKbMediaCategories(fileType)
-  } catch {
-    kbTree.value = []
-  }
-}
-
-function onKbCategoryChange(value: string | number | (string | number)[]) {
-  if (Array.isArray(value)) {
-    const full = String(value[value.length - 1] ?? '')
-    const node = full ? findNodeByFull(kbTree.value, full) : null
-    store.params.kb_category = node?.prefixes?.join(',') || ''
-  } else {
-    store.params.kb_category = ''
-  }
-}
-
-watch(() => store.params.video_source, loadKbTree, { immediate: true })
 
 const localFileList = computed<UploadUserFile[]>(() =>
   store.localMaterials.map((f) => ({ name: f.name, size: f.size }) as UploadUserFile),

@@ -1,141 +1,42 @@
 <template>
   <div class="guide-page">
-    <el-header class="guide-topbar" height="56px">
-      <div class="brand">短视频生成器 · 使用教程</div>
+    <el-header class="guide-topbar" height="60px">
+      <div class="brand">短视频生成器 · 新手指南</div>
       <div class="spacer" />
-      <el-button text class="back-btn" @click="goBack">← 返回工作台</el-button>
+      <el-button text class="back-btn" @click="goBack">返回工作台</el-button>
     </el-header>
 
     <el-main class="guide-main">
+      <section class="hero">
+        <span class="eyebrow">第一次使用？从这里开始</span>
+        <h1>四步生成第一条短视频</h1>
+        <p>无需逐项研究全部设置。先按推荐配置完成一次生成，之后再按需要微调。</p>
+        <el-button type="primary" size="large" @click="startTour">开始界面引导</el-button>
+      </section>
+
       <el-card class="guide-card" shadow="never">
-        <article class="guide-content">
-          <p class="lead">
-            一款基于 AI 的短视频自动生成工具。只需输入一个视频主题，即可自动完成「脚本撰写 → 素材匹配 → 配音 → 字幕合成」全流程，快速产出一条完整短视频。
-          </p>
+        <el-steps :active="4" align-center class="quick-steps">
+          <el-step title="填写主题" description="告诉 AI 要做什么视频" />
+          <el-step title="选择素材" description="选择知识库和素材目录" />
+          <el-step title="确认声音字幕" description="保留默认配置即可" />
+          <el-step title="生成并查看" description="任务完成后播放或下载" />
+        </el-steps>
+        <div class="step-grid">
+          <article class="step-card"><span class="step-number">1</span><div><h2>填写主题并生成脚本</h2><p>在“视频主题”输入想表达的内容，例如“秋日城市漫步”。点击“生成脚本”，也可以直接粘贴已有文案。</p></div></article>
+          <article class="step-card"><span class="step-number">2</span><div><h2>选择知识库素材</h2><p>在“素材来源”选择“知识库”，再选择要使用的素材目录。打开“素材匹配脚本”可让画面更贴近文案。</p></div></article>
+          <article class="step-card"><span class="step-number">3</span><div><h2>使用推荐的声音、字幕和 BGM</h2><p>保持 AI 配音、字幕开启和随机背景音乐即可生成完整成片；确认效果后再调整音色、字号或音乐音量。</p></div></article>
+          <article class="step-card"><span class="step-number">4</span><div><h2>开始生成并查看结果</h2><p>点击“开始生成视频”。任务管理会显示进度；完成后可直接播放预览或下载视频。</p></div></article>
+        </div>
+      </el-card>
 
-          <h2>素材源选择流程</h2>
-          <p>视频素材来源的选择，主要分为以下几种流程：</p>
-
-          <h3>当素材源选择知识库时</h3>
-          <img class="guide-img" :src="flow1" alt="素材源选择 Pexels 时的流程" />
-
-          <h3>当素材源选择知识库且不匹配脚本时</h3>
-          <p>步骤和选择 Pexels 一样，但「素材匹配脚本」这个不用开。</p>
-          <img class="guide-img" :src="flow2" alt="素材源选择知识库时的流程" />
-
-          <h3>当素材源选择pexels时</h3>
-          <img class="guide-img" :src="flow3" alt="素材源选择知识库且不匹配脚本时的流程" />
-
-          <h2>一、简介</h2>
-          <p>本系统是 MoneyPrinterTurbo 的多用户 Web 版本，支持账号注册登录、多租户隔离与任务管理。</p>
-          <p class="sub-title">核心能力</p>
-          <ul>
-            <li>AI 脚本生成：支持自定义文案要求与知识库检索</li>
-            <li>多素材来源：Pexels / Pixabay / Coverr / 本地素材 / 知识库 / 即梦 AI</li>
-            <li>多 AI 配音：Azure、SiliconFlow、Gemini、ElevenLabs、小米 MiMo、Chatterbox 等</li>
-            <li>字幕样式自定义：字体、字号、颜色、描边、位置、背景</li>
-            <li>任务管理：实时进度、暂停/恢复、重试、播放、下载</li>
-          </ul>
-
-          <h2>二、快速开始</h2>
-          <ol>
-            <li><strong>注册 / 登录</strong>：首次使用请先点击「立即注册」创建账号，再用账号密码登录。</li>
-            <li><strong>填写主题</strong>：进入工作台，在左侧「脚本」面板输入视频主题（必填），例如「春天的花海，一场说走就走的旅行」。</li>
-            <li><strong>生成脚本</strong>：点击「生成脚本」，AI 自动撰写视频文案。</li>
-            <li><strong>生成关键词</strong>：点击「生成关键词」，AI 从脚本中提取用于搜索素材的关键词。</li>
-            <li><strong>开始生成</strong>：按需设置画面、配音、字幕后，点击底部「开始生成视频」。</li>
-            <li><strong>查看结果</strong>：在「任务管理」中查看进度，完成后可「播放」预览或「下载」成片。</li>
-          </ol>
-
-          <h2>三、脚本面板</h2>
-          <table>
-            <thead><tr><th>配置项</th><th>说明</th></tr></thead>
-            <tbody>
-              <tr><td>视频主题</td><td>视频核心内容，<strong>必填</strong></td></tr>
-              <tr><td>视频语言</td><td>脚本语言，支持简/繁中文、英、德、西、法、俄、越、泰、土耳其语等</td></tr>
-              <tr><td>脚本时长（秒）</td><td><code>0</code> 表示不限；非 0 时按约 4.2 字/秒换算目标字数</td></tr>
-              <tr><td>自定义文案要求</td><td>对脚本风格、结构、口吻的额外要求</td></tr>
-              <tr><td>自定义 System Prompt</td><td>高级选项，留空使用系统默认</td></tr>
-              <tr><td>使用知识库</td><td>开启后可从知识库文档检索相关内容辅助生成脚本</td></tr>
-              <tr><td>视频脚本</td><td>可直接粘贴自写脚本，或点「生成脚本」由 AI 生成</td></tr>
-              <tr><td>视频关键词</td><td>用于搜索素材的关键词，逗号分隔，可点「生成关键词」自动提取</td></tr>
-            </tbody>
-          </table>
-
-          <h2>四、视频画面面板</h2>
-          <table>
-            <thead><tr><th>配置项</th><th>说明</th></tr></thead>
-            <tbody>
-              <tr><td>视频比例</td><td>横屏 16:9 / 竖屏 9:16 / 方形 1:1</td></tr>
-              <tr><td>拼接模式</td><td>随机（素材随机拼接）/ 顺序（按序拼接）</td></tr>
-              <tr><td>素材来源</td><td>Pexels / Pixabay / Coverr（在线素材库，需配置 API Key）、本地素材（上传自备视频/图片）、知识库（取用知识库素材）、即梦 AI（AI 生成图片）</td></tr>
-              <tr><td>知识库层级</td><td>选择「知识库」或「即梦 AI」时，可指定分类层级（可选中中间层级聚合）</td></tr>
-              <tr><td>本地素材</td><td>选择「本地素材」时，上传视频或图片文件</td></tr>
-              <tr><td>每片段时长</td><td>每个镜头时长，1–60 秒</td></tr>
-              <tr><td>剪辑速度</td><td>素材播放速度，0.1–3 倍</td></tr>
-              <tr><td>素材匹配脚本</td><td>开启后尝试让素材内容与脚本语义匹配</td></tr>
-            </tbody>
-          </table>
-
-          <h2>五、配音面板</h2>
-          <table>
-            <thead><tr><th>配置项</th><th>说明</th></tr></thead>
-            <tbody>
-              <tr><td>配音模式</td><td>AI 配音（文字转语音）/ 上传配音（自备音频）/ 无配音</td></tr>
-              <tr><td>TTS 服务器</td><td>Azure TTS V1/V2、SiliconFlow、Google Gemini、小米 MiMo、ElevenLabs、Chatterbox</td></tr>
-              <tr><td>音色</td><td>选择具体配音音色（男声/女声等）</td></tr>
-              <tr><td>音量 / 语速</td><td>调节配音音量与播放速度</td></tr>
-              <tr><td>背景音乐</td><td>随机（内置曲库随机）/ 无 / 自定义（上传音乐），可调音量</td></tr>
-            </tbody>
-          </table>
-
-          <h2>六、字幕面板</h2>
-          <table>
-            <thead><tr><th>配置项</th><th>说明</th></tr></thead>
-            <tbody>
-              <tr><td>字幕开关</td><td>控制是否显示字幕</td></tr>
-              <tr><td>字体 / 字号</td><td>字幕字体与大小</td></tr>
-              <tr><td>文字颜色 / 描边颜色 / 描边宽度</td><td>字幕外观</td></tr>
-              <tr><td>字幕位置</td><td>顶部 / 居中 / 底部 / 自定义</td></tr>
-              <tr><td>字幕背景</td><td>可启用背景色块与圆角效果</td></tr>
-            </tbody>
-          </table>
-
-          <h2>七、任务管理</h2>
-          <ul>
-            <li><strong>状态</strong>：处理中、已完成、失败、已暂停、历史等。</li>
-            <li><strong>进度</strong>：处理中的任务实时显示进度条。</li>
-            <li><strong>操作</strong>：
-              <ul>
-                <li>暂停 / 恢复：控制任务执行</li>
-                <li>重试：失败任务重新提交</li>
-                <li>播放：在线预览成片</li>
-                <li>下载：下载视频文件</li>
-                <li>删除：删除任务及其生成文件</li>
-              </ul>
-            </li>
-            <li>列表每 2 秒自动刷新，也可点击表头右上角刷新按钮手动刷新。</li>
-          </ul>
-
-          <h2>八、设置</h2>
-          <p>点击右上角「设置」按钮打开设置对话框：</p>
-          <ul>
-            <li><strong>界面</strong>：默认字体、字号、字幕位置、文字颜色、默认语言、配音模式、TTS 服务器等默认值。</li>
-            <li><strong>缓存</strong>：查看缓存文件数与占用大小，可一键清理。</li>
-            <li><strong>LLM</strong>：配置 LLM 提供商、API Key、模型名、Base URL。</li>
-            <li><strong>素材 API</strong>：配置 Pexels、Pixabay、Coverr 的 API Key（使用在线素材库需要）。</li>
-          </ul>
-          <p class="note">部分设置（LLM、素材 API 等）需要管理员权限才能保存。</p>
-
-          <h2>九、常见问题（FAQ）</h2>
-          <ol>
-            <li><strong>无法生成视频？</strong> 确认已填写「视频主题」，且所选素材来源对应的 API Key 已配置。</li>
-            <li><strong>任务一直处理中？</strong> 观察进度条；若长时间卡住，可尝试「暂停→恢复」，或删除后重试。</li>
-            <li><strong>视频没有声音？</strong> 检查配音面板是否误设为「无配音」，或音量是否调为 0。</li>
-            <li><strong>字幕不显示？</strong> 确认字幕开关已打开，字号与位置设置合理。</li>
-            <li><strong>在线素材搜不到？</strong> 请确认已在「设置 → 素材 API」中配置对应平台的 API Key。</li>
-          </ol>
-        </article>
+      <el-card class="guide-card" shadow="never">
+        <h2 class="section-title">新手常见问题</h2>
+        <el-collapse>
+          <el-collapse-item title="第一次生成时，哪些设置必须填写？" name="required"><p>只需填写视频主题，并在使用知识库时选择一个素材目录。其余选项均可先使用默认值。</p></el-collapse-item>
+          <el-collapse-item title="为什么建议先使用知识库？" name="knowledge"><p>知识库会从您已整理的素材中选取画面。选择目录后，系统会在该目录及其子目录中匹配素材。</p></el-collapse-item>
+          <el-collapse-item title="生成后没有字幕、配音或背景音乐怎么办？" name="media"><p>生成前确认“字幕”开关已开启、配音模式不是“无配音”，背景音乐类型不是“无”。</p></el-collapse-item>
+          <el-collapse-item title="在哪里查看生成的视频？" name="result"><p>回到工作台下方的“任务管理”，等待进度完成后点击播放或下载。</p></el-collapse-item>
+        </el-collapse>
       </el-card>
     </el-main>
   </div>
@@ -143,129 +44,23 @@
 
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import flow1 from '@/assets/images/guide-flow-1.png'
-import flow2 from '@/assets/images/guide-flow-2.png'
-import flow3 from '@/assets/images/guide-flow-3.png'
-
 const router = useRouter()
-
-function goBack() {
-  router.replace('/')
-}
+const goBack = () => router.replace('/')
+const startTour = () => router.replace({ path: '/', query: { tour: '1' } })
 </script>
 
 <style scoped>
-.guide-page {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: #f5f7fa;
-}
-.guide-topbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: #1f2d3d;
-  color: #fff;
-  flex-shrink: 0;
-}
-.brand {
-  font-size: 17px;
-  font-weight: 600;
-}
-.spacer {
-  flex: 1;
-}
-.back-btn {
-  color: #fff;
-}
-.guide-main {
-  flex: 1;
-  overflow: auto;
-  padding: 20px;
-}
-.guide-card {
-  max-width: 880px;
-  margin: 0 auto;
-}
-.guide-content {
-  line-height: 1.7;
-  color: #303133;
-  font-size: 14px;
-}
-.guide-content .lead {
-  font-size: 15px;
-  color: #606266;
-  background: #f0f9ff;
-  border-left: 4px solid #409eff;
-  padding: 12px 16px;
-  border-radius: 0 6px 6px 0;
-  margin: 0 0 20px;
-}
-.guide-content h2 {
-  font-size: 18px;
-  margin: 28px 0 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #ebeef5;
-  color: #1f2d3d;
-}
-.guide-content .sub-title {
-  font-weight: 600;
-  margin: 16px 0 6px;
-}
-.guide-content ul,
-.guide-content ol {
-  margin: 8px 0;
-  padding-left: 24px;
-}
-.guide-content li {
-  margin: 4px 0;
-}
-.guide-content table {
-  width: 100%;
-  border-collapse: collapse;
-  margin: 10px 0 16px;
-  font-size: 13px;
-}
-.guide-content th,
-.guide-content td {
-  border: 1px solid #ebeef5;
-  padding: 8px 12px;
-  text-align: left;
-  vertical-align: top;
-}
-.guide-content th {
-  background: #f5f7fa;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.guide-content h3 {
-  font-size: 15px;
-  margin: 20px 0 8px;
-  color: #303133;
-}
-.guide-content .guide-img {
-  max-width: 100%;
-  height: auto;
-  display: block;
-  margin: 8px 0 16px;
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-.guide-content code {
-  background: #f0f2f5;
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-size: 12px;
-  color: #c7254e;
-}
-.guide-content .note {
-  color: #909399;
-  font-size: 13px;
-  background: #fdf6ec;
-  border-left: 3px solid #e6a23c;
-  padding: 8px 12px;
-  border-radius: 0 4px 4px 0;
-}
+.guide-page { min-height: 100%; background: #f5f7fa; }
+.guide-topbar { display: flex; align-items: center; gap: 12px; background: #1f2d3d; color: #fff; }
+.brand { font-size: 18px; font-weight: 600; }.spacer { flex: 1; }.back-btn { color: #fff; }
+.guide-main { max-width: 1040px; margin: 0 auto; padding: 28px 20px 48px; }
+.hero { padding: 26px 30px; margin-bottom: 20px; border-radius: 12px; color: #fff; background: linear-gradient(135deg, #2b73c7, #4aa4f4); }
+.eyebrow { font-size: 13px; opacity: .88; }.hero h1 { margin: 6px 0; font-size: 28px; }.hero p { margin: 0 0 18px; opacity: .95; }
+.guide-card { margin-bottom: 20px; border-radius: 10px; }.quick-steps { margin: 4px 0 28px; }
+.step-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.step-card { display: flex; gap: 14px; padding: 18px; border: 1px solid #e8eef7; border-radius: 8px; background: #fbfdff; }
+.step-number { display: grid; place-items: center; flex: 0 0 28px; height: 28px; border-radius: 50%; background: #409eff; color: #fff; font-weight: 700; }
+.step-card h2 { margin: 0 0 6px; font-size: 16px; color: #1f2d3d; }.step-card p { margin: 0; color: #606266; line-height: 1.7; font-size: 14px; }
+.section-title { margin: 0 0 12px; font-size: 19px; color: #1f2d3d; }
+@media (max-width: 720px) { .guide-main { padding: 16px 12px 32px; }.hero { padding: 22px 20px; }.hero h1 { font-size: 23px; }.step-grid { grid-template-columns: 1fr; }.quick-steps { display: none; } }
 </style>
