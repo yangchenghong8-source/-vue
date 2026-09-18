@@ -87,7 +87,7 @@ services:
     - '8091'
     container_name: moneyprinterturbo-mcp
     environment:
-    - MCP_BEARER_TOKEN=${MCP_BEARER_TOKEN:?Set MCP_BEARER_TOKEN in .env}
+    - MCP_BEARER_TOKEN=
     - MCP_API_URL=http://api:8080
     - KB_API_BASE=http://${SERVER_HOST}:3001
     ports:
