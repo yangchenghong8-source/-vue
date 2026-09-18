@@ -190,7 +190,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       : chineseVoices.value[0] ?? '',
   )
   const voiceOptions = computed(() =>
-    currentVoices.value.map((voice) => ({
+    chineseVoices.value.map((voice) => ({
       value: voice,
       label: `${friendlyVoice(voice)}${voice === recommendedVoice.value ? '（推荐）' : ''}`,
     })),
@@ -251,7 +251,7 @@ export const useWorkbenchStore = defineStore('workbench', () => {
       : 'azure-tts-v1'
 
     const savedVoiceName = (ui.voice_name as string) || ''
-    if (savedVoiceName && currentVoices.value.includes(savedVoiceName)) {
+    if (savedVoiceName && chineseVoices.value.includes(savedVoiceName)) {
       params.voice_name = savedVoiceName
     } else if (voiceMode.value === 'tts' && chineseVoices.value.length) {
       params.voice_name = recommendedVoice.value

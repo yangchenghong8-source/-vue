@@ -64,6 +64,9 @@ twelvelabs_rerank_terms = false
 # 默认关闭，开启后会减少随机性，使素材顺序更贴近文案结构。
 match_materials_to_script = true
 material_match_min_score = 0.45
+# Require a specific word from the shot to appear in the material filename or
+# its visual description; prevents unrelated assets within the same category.
+material_match_require_keyword_overlap = true
 allow_material_reuse = false
 
 # Optional Sonilo video-matched original background music.

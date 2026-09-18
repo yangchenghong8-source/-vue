@@ -16,7 +16,7 @@
 
       <div class="subtitle-preview" :style="previewBoxStyle">
         <div class="preview-caption">实时字幕预览 · {{ store.params.font_size }} px</div>
-        <div :style="previewTextStyle">这是你看到的效果</div>
+        <div :style="previewTextStyle">让素材与文案准确匹配</div>
       </div>
 
       <el-form-item label="字号">
